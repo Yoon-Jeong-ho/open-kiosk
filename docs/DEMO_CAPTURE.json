@@ -1,0 +1,21 @@
+{
+  "duration": 31,
+  "source_duration": 28.064,
+  "source_frames": 710,
+  "camera_size": [
+    1370,
+    672
+  ],
+  "enlarged_at": 5.042,
+  "zoom_preserved": true,
+  "text_scale": 1.4,
+  "image_scale": 1.4,
+  "text_pixels": 22.4,
+  "image_pixels": 156.8,
+  "final_count": 2,
+  "final_total": 7500,
+  "mid_take_cuts": 0,
+  "max_capture_gap": 0.084,
+  "video_bytes": 681342,
+  "version": "f049f39bec01"
+}

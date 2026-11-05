@@ -6,10 +6,11 @@ import { normalizePreferences, applyPresentation, parsePresentationCommand } fro
 export async function kioskPage(main) {
   let alive = true, busy = false, state, category = 'all', recording, recordTimer, micPending = false, audioConsent = false, uiRevision = 0;
   const controller = new AbortController();
-  const demoMode = new URLSearchParams(location.search).get('demo') === 'voice';
-  let voicePhase = 'idle', heardText = '', levelStop = () => {}, demoAudio, demoCancel = () => {}, demoIndex = 0, demoPlaying = false;
+  const params = new URLSearchParams(location.search);
+  const demoMode = params.get('demo') === 'voice' && (!params.get('store') || params.get('store') === 'demo');
+  let voicePhase = 'idle', heardText = '', levelStop = () => {}, demoAudio, demoCancel = () => {}, demoIndex = 0, demoPlaying = false, demoRunning = false;
   let prefs = normalizePreferences();
-  try { prefs = normalizePreferences(JSON.parse(localStorage.getItem('ok_preferences') || '{}')); } catch {}
+  if (!demoMode) try { prefs = normalizePreferences(JSON.parse(localStorage.getItem('ok_preferences') || '{}')); } catch {}
   const t = (key, values) => tr(prefs.language, key, values);
   const name = (p) => productName(p, prefs.language);
   const money = (n) => priceText(n, prefs.language);
@@ -78,7 +79,7 @@ export async function kioskPage(main) {
       $(`#${field}-scale-value`).textContent = `${Math.round(value * 100)}%`;
       $(`#${field}-scale-input`).setAttribute('aria-valuetext', `${Math.round(value * 100)}%`);
     }
-    try { localStorage.setItem('ok_preferences', JSON.stringify(prefs)); } catch {}
+    if (!demoMode) try { localStorage.setItem('ok_preferences', JSON.stringify(prefs)); } catch {}
     $$('.kiosk-modal').forEach(positionDialog);
   };
   const applyUI = (patch, announce = true) => {
@@ -97,9 +98,10 @@ export async function kioskPage(main) {
   };
   const acceptState = (next) => { const changed = JSON.stringify(state.products) !== JSON.stringify(next.products); state = next; if (changed) paintMenu(); paintCart(); };
   const setBusy = (value) => {
-    busy = value; $('#send-order').disabled = value || !!recording || micPending; $('#voice-order').disabled = value || micPending;
+    busy = value; $('#send-order').disabled = value || !!recording || micPending; $('#voice-order').disabled = value || micPending || demoRunning;
     $('#order-text').disabled = value || !!recording || micPending;
-    if ($('#demo-voice-next')) $('#demo-voice-next').disabled = value || !!recording || micPending || demoIndex >= 4;
+    if ($('#demo-voice-next')) $('#demo-voice-next').disabled = value || !!recording || micPending || demoRunning || demoIndex >= 4;
+    if ($('#demo-run-all')) $('#demo-run-all').disabled = value || !!recording || micPending || demoRunning;
     $('#composer').setAttribute('aria-busy', String(value));
     $('#send-order').innerHTML = value ? `<span class="button-spinner"></span><span class="sr-only">${e(t('busy'))}</span>` : icon('arrow'); paintCart();
   };
@@ -247,6 +249,7 @@ export async function kioskPage(main) {
   };
   const playDemoVoice = async () => {
     if (busy || recording || demoIndex >= 4) return;
+    $('#voice-panel').dataset.demoStep = String(demoIndex + 1);
     const url = `/media/voice-sample-0${demoIndex + 1}.mp3`; heardText = ''; demoPlaying = true; setBusy(true); paintVoice('sample');
     if ('speechSynthesis' in window) speechSynthesis.cancel();
     demoAudio = new Audio(url); watchLevels(demoAudio);
@@ -261,7 +264,28 @@ export async function kioskPage(main) {
     } catch (err) { demoAudio?.pause(); levelStop(); demoPlaying = false; if (alive) { paintVoice('error'); await fail(err); } }
     finally {
       demoAudio = null;
-      if (alive) { setBusy(false); const labels = ['01  글씨 키우기', '02  아이스 두 잔 주문', '03  한 잔만 따뜻하게', '04  차가운 잔에 시럽']; $('#demo-voice-next').textContent = labels[demoIndex] || '시연 완료'; }
+      if (alive) { setBusy(false); const labels = ['01  글자·그림 키우기', '02  아이스 두 잔 주문', '03  한 잔만 따뜻하게', '04  차가운 잔에 시럽']; $('#demo-voice-next').textContent = labels[demoIndex] || '시연 완료'; }
+    }
+  };
+
+  const runDemoSequence = async () => {
+    if (!demoMode || busy || recording || demoRunning) return;
+    const wrapper = $('.voice-demo-mode'); demoRunning = true; wrapper.dataset.running = 'true';
+    try {
+      demoIndex = 0; heardText = ''; category = 'all';
+      $$('[data-category]').forEach((button) => { const selected = button.dataset.category === 'all'; button.classList.toggle('active', selected); button.setAttribute('aria-pressed', String(selected)); }); paintMenu();
+      applyUI({ reset: true, language: 'ko' }); paintVoice('idle');
+      await change({ type: 'clear' });
+      if (!alive || state.count !== 0) return;
+      for (let step = 0; step < 4 && alive; step++) {
+        const before = demoIndex; await playDemoVoice();
+        if (!alive || demoIndex === before) return;
+        await new Promise((resolve) => setTimeout(resolve, step === 3 ? 1700 : 1200));
+      }
+      if (alive && demoIndex === 4) { demoRunning = false; setBusy(false); reviewOrder(); }
+    } finally {
+      demoRunning = false;
+      if (alive) { wrapper.dataset.running = 'false'; setBusy(false); }
     }
   };
 
@@ -269,7 +293,7 @@ export async function kioskPage(main) {
     state = await api('/api/kiosk/bootstrap', { method: 'POST', body: { store: new URLSearchParams(location.search).get('store') || 'demo' } });
     if (location.pathname !== '/kiosk') return;
     const sizeControl = (kind, min, max) => `<div class="size-control"><label for="${kind}-scale-input" data-i18n="${kind === 'text' ? 'textSize' : 'imageSize'}"></label><output id="${kind}-scale-value" for="${kind}-scale-input"></output><div><button data-size="${kind}" data-delta="-1" aria-label="${e(t(kind === 'text' ? 'textSize' : 'imageSize'))} ${e(t('smaller'))}">${icon('minus')}</button><input id="${kind}-scale-input" type="range" min="${min}" max="${max}" step=".05"><button data-size="${kind}" data-delta="1" aria-label="${e(t(kind === 'text' ? 'textSize' : 'imageSize'))} ${e(t('larger'))}">${icon('plus')}</button></div></div>`;
-    main.innerHTML = `<section class="kiosk-experience${demoMode ? ' voice-demo-mode' : ''}"><header class="experience-bar"><a class="experience-back" href="/">${icon('arrow')}<span data-i18n="siteBack"></span></a><span class="experience-title" data-i18n="experience"></span><span class="experience-demo" data-i18n="demo"></span><a href="/privacy" target="_blank" rel="noopener" class="experience-data" data-i18n="dataNotice"></a></header>${demoMode ? '<div class="voice-demo-toolbar"><span>합성 음성 시연 · 실제 음성 인식·주문 처리</span><button class="btn btn-dark btn-sm" id="demo-voice-next">01  글씨 키우기</button></div>' : ''}<div class="device-shell"><span class="device-camera" aria-hidden="true"></span><div class="device-screen"><div class="kiosk-app"><header class="kiosk-header"><span class="kiosk-store-name">${e(state.store.name)}</span><div class="kiosk-tools"><label class="language-picker"><span class="sr-only" data-i18n="language"></span><select id="language-select">${languages.map((v) => `<option value="${v.id}">${v.label}</option>`).join('')}</select></label><button id="view-settings-toggle" aria-expanded="false" aria-controls="view-settings">${icon('type')}<span data-i18n="view"></span></button><button data-pref="read" aria-pressed="false">${icon('volume')}<span data-i18n="read"></span></button></div></header><section class="kiosk-view-settings" id="view-settings" hidden aria-label="${e(t('view'))}"><div class="view-settings-heading"><strong data-i18n="view"></strong><button class="icon-btn" id="close-settings" data-label="close">${icon('close')}</button></div>${sizeControl('text', .9, 1.6)}${sizeControl('image', .75, 1.5)}<div class="view-settings-bottom"><button id="reset-sizes" data-i18n="reset"></button><button data-pref="contrast" aria-pressed="false" data-i18n="contrast"></button></div></section><div class="kiosk-layout"><section class="kiosk-selection"><h1 class="kiosk-menu-title" data-i18n="menuTitle"></h1><div class="assistant-box" id="assistant-box"><span class="assistant-avatar" aria-hidden="true">✳</span><p id="assistant-message" aria-live="polite" aria-atomic="true"></p><button id="repeat-message" class="icon-btn" data-label="repeat">${icon('volume')}</button></div><div class="category-tabs" role="group" aria-label="${e(t('all'))}"><button class="active" data-category="all" aria-pressed="true" data-i18n="all"></button><button data-category="coffee" aria-pressed="false" data-i18n="coffee"></button><button data-category="tea" aria-pressed="false" data-i18n="tea"></button></div><div class="kiosk-menu" id="kiosk-menu"></div><form class="composer" id="composer"><div class="voice-panel" id="voice-panel" data-phase="idle"><button type="button" class="voice-btn" id="voice-order"></button><div class="voice-body"><p id="voice-state" role="status"></p><div class="voice-wave" aria-hidden="true">${Array.from({ length: 16 }, () => '<i></i>').join('')}</div><div class="voice-caption" id="voice-caption" hidden><small data-i18n="heard"></small><p id="voice-heard"></p></div></div><button type="button" class="voice-keyboard-toggle" id="keyboard-toggle" data-label="keyboard" aria-expanded="false" aria-controls="keyboard-entry">${icon('keyboard')}<span data-i18n="keyboard"></span></button></div><div id="keyboard-entry" hidden><div class="composer-input-row"><label class="sr-only" for="order-text" data-i18n="inputLabel"></label><input id="order-text" maxlength="500" autocomplete="off" enterkeyhint="send"><button type="submit" id="send-order" class="send-btn" data-label="send">${icon('arrow')}</button></div></div><p class="composer-note" data-i18n="aiNote"></p></form></section><aside class="cart-panel"><div class="cart-panel-head"><h2 id="cart-heading" tabindex="-1"><span data-i18n="cart"></span><span id="cart-count">0</span></h2><button id="clear-cart" class="small-text-btn" data-i18n="clear"></button></div><div class="cart-lines" id="cart-lines"></div><div class="cart-summary"><div><span data-i18n="total"></span><strong id="cart-total"></strong></div><button id="review-order" class="btn btn-dark full-width" disabled><span data-i18n="review"></span>${icon('arrow')}</button><button id="request-help" class="help-button">${icon('help')}<span data-i18n="help"></span></button></div></aside></div></div></div><span class="device-brand" aria-hidden="true">OPEN KIOSK</span></div></section>`;
+    main.innerHTML = `<section class="kiosk-experience${demoMode ? ' voice-demo-mode' : ''}"><header class="experience-bar"><a class="experience-back" href="/">${icon('arrow')}<span data-i18n="siteBack"></span></a><span class="experience-title" data-i18n="experience"></span><span class="experience-demo" data-i18n="demo"></span><a href="/privacy" target="_blank" rel="noopener" class="experience-data" data-i18n="dataNotice"></a></header>${demoMode ? '<div class="voice-demo-toolbar"><span>합성 음성 시연 · 실제 음성 인식·주문 처리</span><div><button class="btn btn-dark btn-sm" id="demo-run-all">처음부터 연속 시연</button><button class="btn btn-outline btn-sm" id="demo-voice-next">01  글자·그림 키우기</button></div></div>' : ''}<div class="device-shell"><span class="device-camera" aria-hidden="true"></span><div class="device-screen"><div class="kiosk-app"><header class="kiosk-header"><span class="kiosk-store-name">${e(state.store.name)}</span><div class="kiosk-tools"><label class="language-picker"><span class="sr-only" data-i18n="language"></span><select id="language-select">${languages.map((v) => `<option value="${v.id}">${v.label}</option>`).join('')}</select></label><button id="view-settings-toggle" aria-expanded="false" aria-controls="view-settings">${icon('type')}<span data-i18n="view"></span></button><button data-pref="read" aria-pressed="false">${icon('volume')}<span data-i18n="read"></span></button></div></header><section class="kiosk-view-settings" id="view-settings" hidden aria-label="${e(t('view'))}"><div class="view-settings-heading"><strong data-i18n="view"></strong><button class="icon-btn" id="close-settings" data-label="close">${icon('close')}</button></div>${sizeControl('text', .9, 1.6)}${sizeControl('image', .75, 1.5)}<div class="view-settings-bottom"><button id="reset-sizes" data-i18n="reset"></button><button data-pref="contrast" aria-pressed="false" data-i18n="contrast"></button></div></section><div class="kiosk-layout"><section class="kiosk-selection"><h1 class="kiosk-menu-title" data-i18n="menuTitle"></h1><div class="assistant-box" id="assistant-box"><span class="assistant-avatar" aria-hidden="true">✳</span><p id="assistant-message" aria-live="polite" aria-atomic="true"></p><button id="repeat-message" class="icon-btn" data-label="repeat">${icon('volume')}</button></div><div class="category-tabs" role="group" aria-label="${e(t('all'))}"><button class="active" data-category="all" aria-pressed="true" data-i18n="all"></button><button data-category="coffee" aria-pressed="false" data-i18n="coffee"></button><button data-category="tea" aria-pressed="false" data-i18n="tea"></button></div><div class="kiosk-menu" id="kiosk-menu"></div><form class="composer" id="composer"><div class="voice-panel" id="voice-panel" data-phase="idle"><button type="button" class="voice-btn" id="voice-order"></button><div class="voice-body"><p id="voice-state" role="status"></p><div class="voice-wave" aria-hidden="true">${Array.from({ length: 16 }, () => '<i></i>').join('')}</div><div class="voice-caption" id="voice-caption" hidden><small data-i18n="heard"></small><p id="voice-heard"></p></div></div><button type="button" class="voice-keyboard-toggle" id="keyboard-toggle" data-label="keyboard" aria-expanded="false" aria-controls="keyboard-entry">${icon('keyboard')}<span data-i18n="keyboard"></span></button></div><div id="keyboard-entry" hidden><div class="composer-input-row"><label class="sr-only" for="order-text" data-i18n="inputLabel"></label><input id="order-text" maxlength="500" autocomplete="off" enterkeyhint="send"><button type="submit" id="send-order" class="send-btn" data-label="send">${icon('arrow')}</button></div></div><p class="composer-note" data-i18n="aiNote"></p></form></section><aside class="cart-panel"><div class="cart-panel-head"><h2 id="cart-heading" tabindex="-1"><span data-i18n="cart"></span><span id="cart-count">0</span></h2><button id="clear-cart" class="small-text-btn" data-i18n="clear"></button></div><div class="cart-lines" id="cart-lines"></div><div class="cart-summary"><div><span data-i18n="total"></span><strong id="cart-total"></strong></div><button id="review-order" class="btn btn-dark full-width" disabled><span data-i18n="review"></span>${icon('arrow')}</button><button id="request-help" class="help-button">${icon('help')}<span data-i18n="help"></span></button></div></aside></div></div></div><span class="device-brand" aria-hidden="true">OPEN KIOSK</span></div></section>`;
     paintLanguage(); preferences(); status(lastReply);
     const toggleSettings = (open) => { $('#view-settings').hidden = !open; $('#view-settings-toggle').setAttribute('aria-expanded', String(open)); };
     $('#view-settings-toggle').onclick = () => toggleSettings($('#view-settings').hidden);
@@ -295,7 +319,7 @@ export async function kioskPage(main) {
     }, { signal: controller.signal });
     main.addEventListener('keydown', (event) => { if (event.key === 'Escape' && !$('#view-settings').hidden) { toggleSettings(false); $('#view-settings-toggle').focus(); } }, { signal: controller.signal });
     window.addEventListener('resize', () => $$('.kiosk-modal').forEach(positionDialog), { signal: controller.signal });
-    if (demoMode) $('#demo-voice-next').onclick = playDemoVoice;
+    if (demoMode) { $('#demo-voice-next').onclick = playDemoVoice; $('#demo-run-all').onclick = runDemoSequence; }
     $('#keyboard-toggle').onclick = () => { const entry = $('#keyboard-entry'); entry.hidden = !entry.hidden; $('#keyboard-toggle').setAttribute('aria-expanded', String(!entry.hidden)); if (!entry.hidden) $('#order-text').focus(); };
     $('#composer').onsubmit = (event) => { event.preventDefault(); submitText(); };
     $('#voice-order').onclick = voice; $('#repeat-message').onclick = () => speak(lastReply, true); $('#review-order').onclick = reviewOrder;

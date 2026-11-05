@@ -59,11 +59,23 @@ export function parsePresentationCommand(input, current = defaultPreferences) {
   const maximum = bigger && /최대|아주|가장|largest|maximum|最大/.test(text);
   const minimum = smaller && /최소|가장|smallest|minimum|最小/.test(text);
   const readable = bigger && textTarget && /작아|작네|너무\s*작|too\s*small|文字.*小さ|字.*太小/.test(text);
+  const readableImages = readable && imageTarget;
   return sanitizePresentation({
     language, reset,
     text_delta: (textTarget || both) && !maximum && !minimum && !readable ? direction : 0,
-    image_delta: (imageTarget || both) && !maximum && !minimum ? direction : 0,
+    image_delta: (imageTarget || both) && !maximum && !minimum && !readableImages ? direction : 0,
     text_size: readable ? Math.max(normalizePreferences(current).textScale + .15, 1.4) : (textTarget || both) && (maximum || minimum) ? maximum ? 1.6 : .9 : null,
-    image_size: (imageTarget || both) && (maximum || minimum) ? maximum ? 1.5 : .75 : null,
+    image_size: readableImages ? Math.max(normalizePreferences(current).imageScale + .15, 1.4) : (imageTarget || both) && (maximum || minimum) ? maximum ? 1.5 : .75 : null,
   });
+}
+
+// Order-only requests cannot reset the user's view, even if the model invents display values.
+export function presentationForRequest(input, value) {
+  const text = String(input).toLowerCase();
+  const visualTarget = /글씨|글자|텍스트|사진|이미지|그림|화면|\b(?:text|font|images?|photos?|pictures?|screen|display|zoom)\b|文字|字体|画像|写真|画面|表示|图片|图像|屏幕/.test(text);
+  const visualChange = /크게|키워|확대|작게|줄여|축소|작아|너무\s*작|기본|원래|초기화|\b(?:bigger|larger|smaller|increase|decrease|reset|default|zoom)\b|too\s*small|大き|小さ|拡大|縮小|標準|放大|缩小|太小|更大|更小|默认|\d+\s*%/.test(text);
+  const languageTarget = /한국어|영어|일본어|중국어|\b(?:korean|english|japanese|chinese|language)\b|韓国語|英語|日本語|中国語|中文|韩语|日语|英语/.test(text);
+  const languageChange = /바꿔|변경|전환|보여|로\s*|\b(?:switch|change|use|in)\b|切り替|表示|にして|改|切换|用/.test(text);
+  const requested = parsePresentationCommand(text) !== null || (visualTarget && visualChange) || (languageTarget && languageChange);
+  return sanitizePresentation(requested ? value : {});
 }

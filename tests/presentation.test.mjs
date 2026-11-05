@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizePreferences, applyPresentation, parsePresentationCommand } from '../public/js/presentation.js';
+import { normalizePreferences, applyPresentation, parsePresentationCommand, presentationForRequest } from '../public/js/presentation.js';
 import { languages, tr, productName } from '../public/js/locale.js';
 
 test('plain Korean enlargement changes text and images together', () => {
@@ -50,4 +50,24 @@ test('a complaint about tiny text selects readable text without shrinking an alr
   assert.equal(applyPresentation(next, parsePresentationCommand(text, next)).textScale, 1.55);
   const large = normalizePreferences({ textScale: 1.6 });
   assert.equal(applyPresentation(large, parsePresentationCommand(text, large)).textScale, 1.6);
+});
+
+test('readability requests can enlarge text and images together while preserving the chosen scale for later orders', () => {
+  const text = '글씨가 왜 이리 작아? 글씨랑 그림을 좀 크게 키워줘!';
+  const next = applyPresentation(normalizePreferences(), parsePresentationCommand(text));
+  assert.equal(next.textScale, 1.4); assert.equal(next.imageScale, 1.4);
+  assert.equal(parsePresentationCommand('아이스 아메리카노 두 잔 주세요.', next), null);
+  assert.deepEqual(applyPresentation(next, {}), next);
+  const large = normalizePreferences({ textScale: 1.6, imageScale: 1.5 });
+  assert.deepEqual(applyPresentation(large, parsePresentationCommand(text, large)), large);
+});
+
+test('order-only model replies cannot shrink or reset the selected view, while explicit mixed requests still work', () => {
+  const large = normalizePreferences({ textScale: 1.4, imageScale: 1.4, language: 'ko' });
+  const unsolicited = { reset: true, text_size: 1, image_size: 1, language: 'en' };
+  for (const text of ['아이스 아메리카노 두 잔 주세요.', '그중 하나만 따뜻하게', '차가운 거에 헤이즐넛 시럽 추가', 'Add one iced americano', 'アイスアメリカーノを二つ', '两杯冰美式']) {
+    assert.deepEqual(applyPresentation(large, presentationForRequest(text, unsolicited)), large, text);
+  }
+  assert.equal(presentationForRequest('아메리카노 한 잔 추가하고 글씨랑 사진을 기본 크기로', unsolicited).reset, true);
+  assert.equal(presentationForRequest('Add a latte and switch to English', { language: 'en' }).language, 'en');
 });

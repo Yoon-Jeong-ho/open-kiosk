@@ -1,21 +1,22 @@
 export const demoMedia = {
-  "duration": 38,
-  "version": "b657cffafae1",
+  "duration": 31,
+  "version": "f049f39bec01",
+  "continuous": true,
   "chapters": [
     {
-      "time": 2,
-      "title": "글씨부터 크게"
+      "time": 0.0,
+      "title": "글자·그림 함께 확대"
     },
     {
-      "time": 10,
+      "time": 6.238,
       "title": "아이스 두 잔"
     },
     {
-      "time": 18,
+      "time": 12.473,
       "title": "한 잔만 따뜻하게"
     },
     {
-      "time": 26,
+      "time": 19.764,
       "title": "차가운 잔에 시럽"
     }
   ]

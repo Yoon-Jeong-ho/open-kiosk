@@ -1,6 +1,6 @@
 import { AppError } from './cart.mjs';
 import { isLanguage, productName } from '../public/js/locale.js';
-import { sanitizePresentation } from '../public/js/presentation.js';
+import { presentationForRequest } from '../public/js/presentation.js';
 
 const nullableString = { type: ['string', 'null'] };
 export const intentSchema = {
@@ -60,7 +60,7 @@ export async function interpret({ key, model, text, cart, products, language = '
 추가 옵션은 메뉴에 등록된 것만 허용한다. 헤이즐넛 시럽은 hazelnut이며 잔당 500원이다. '차가운 거에 시럽 추가'는 iced 줄의 line_id만 addons 연산으로 바꾼다. addons 배열은 변경 후 전체 옵션이며 제거는 []이다. 일부 잔에만 옵션을 추가하면 quantity로 해당 잔 수를 지정한다. 온도 변경 시 기존 옵션은 유지한다. 새 메뉴에 시럽을 요청하면 add의 addons에 포함한다.
 '두 잔 말고 한 잔'은 quantity 변경이다. remove는 지정 줄을 삭제한다. 새 메뉴는 add. 온도 미지정 시 확인 질문한다.
 메뉴 질문은 operations=[]로 답한다. 기존 줄이 여러 개라 '그거'가 모호하면 어떤 메뉴인지 묻는다.
-글자·사진 크기 변경이나 언어 변경 요청은 presentation으로 표현한다. 화면 크기를 바꾸어도 주문은 유지한다.
+글자·사진 크기 변경이나 언어 변경 요청은 presentation으로 표현한다. 화면 크기를 바꾸어도 주문은 유지한다. 주문만 바꾸는 요청은 presentation의 size와 language를 모두 null, delta=0, reset=false로 유지한다. 기본값 1을 넣어 화면을 초기화하지 않는다.
 text_delta/image_delta는 확대 1, 축소 -1, 변경 없음 0. 글씨만 요청하면 사진은 바꾸지 않는다. '좀 크게 보여줘'는 둘 다 확대한다.
 기본 크기는 reset=true. 절대 크기 요청일 때 text_size는 0.9~1.6, image_size는 0.75~1.5 범위. 그 외에는 null.
 언어 변경을 요청하면 presentation.language를 ko/en/ja/zh 중 하나로 하고 reply도 새 언어로 한다. 언어 변경이 없으면 language=null.
@@ -80,7 +80,7 @@ text_delta/image_delta는 확대 1, 축소 -1, 변경 없음 0. 글씨만 요청
   if (!intent || typeof intent.reply !== 'string' || typeof intent.review !== 'boolean' || typeof intent.clarification !== 'boolean' || !Array.isArray(intent.operations) || intent.operations.length > 8) throw new AppError(503, '주문 내용을 다시 확인해 주세요.', 'ai_invalid');
   if (intent.clarification) intent.operations = [];
   intent.reply = intent.reply.slice(0, 400);
-  return { ...intent, presentation: sanitizePresentation(intent.presentation), usage: result.usage?.total_tokens || 0 };
+  return { ...intent, presentation: presentationForRequest(text, intent.presentation), usage: result.usage?.total_tokens || 0 };
 }
 
 export async function transcribe({ key, model, bytes, type, language = 'ko' }) {
