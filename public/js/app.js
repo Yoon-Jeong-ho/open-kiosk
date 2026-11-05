@@ -17,6 +17,8 @@ function chrome() {
 export async function render() {
   const id = ++renderId; cleanup(); cleanup = () => {};
   $$closeDialogs(); chrome(); document.title = `Open Kiosk — ${titles[location.pathname] || '페이지'}`;
+  document.documentElement.lang = 'ko';
+  $('.skip-link').textContent = '본문으로 건너뛰기';
   try {
     config ||= await api('/api/config');
     if (id !== renderId) return;

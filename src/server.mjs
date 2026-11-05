@@ -243,12 +243,12 @@ async function handle(req, res) {
         const row = kiosk(req); const body = await readBody(req); checkRevision(row, body.revision);
         if (typeof body.text !== 'string' || !body.text.trim() || body.text.length > 500) throw new AppError(400, '주문을 500자 이내로 입력해 주세요.');
         reserveAI(req, row);
-        const result = await interpret({ key, model: aiModel, text: body.text, cart: JSON.parse(row.cart), products: productsFor(row.store_id) });
+        const result = await interpret({ key, model: aiModel, text: body.text, cart: JSON.parse(row.cart), products: productsFor(row.store_id), language: body.language });
         const fresh = kiosk(req); checkRevision(fresh, body.revision);
         const next = applyOperations(JSON.parse(fresh.cart), result.operations, productsFor(fresh.store_id));
         const updated = result.operations.length ? updateCart(fresh, next, body.revision) : fresh;
         db.prepare('UPDATE usage SET tokens=tokens+? WHERE day=?').run(result.usage, day());
-        return json(res, 200, { ...state(updated), reply: result.reply, review: result.review && next.length > 0, changed: result.operations.length > 0, source: 'openai' });
+        return json(res, 200, { ...state(updated), reply: result.reply, presentation: result.presentation, review: result.review && next.length > 0, changed: result.operations.length > 0, source: 'openai' });
       }
       if (method === 'POST' && path === '/api/kiosk/transcribe') {
         const row = kiosk(req);
@@ -256,7 +256,7 @@ async function handle(req, res) {
         const bytes = await readBody(req, 4 * 1024 * 1024, true);
         if (bytes.length < 100) throw new AppError(400, '녹음이 너무 짧아요. 다시 녹음해 주세요.');
         reserveAI(req, row);
-        const text = await transcribe({ key, model: audioModel, bytes, type: req.headers['content-type'] || '' });
+        const text = await transcribe({ key, model: audioModel, bytes, type: req.headers['content-type'] || '', language: req.headers['x-kiosk-language'] });
         return json(res, 200, { text, source: 'openai' });
       }
       if (method === 'POST' && path === '/api/kiosk/confirm') {
@@ -288,7 +288,7 @@ async function handle(req, res) {
     if (!['GET', 'HEAD'].includes(method)) throw new AppError(405, '지원하지 않는 요청이에요.');
     const pages = ['/', '/pricing', '/signup', '/checkout', '/dashboard', '/kiosk', '/tour', '/privacy', '/accessibility'];
     let relative = pages.includes(path) ? 'index.html' : decodeURIComponent(path).replace(/^\//, '');
-    if (!/^(index\.html|favicon\.svg|style\.css|js\/[a-z-]+\.js)$/.test(relative)) throw new AppError(404, '페이지를 찾지 못했어요.');
+    if (!/^(index\.html|favicon\.svg|style\.css|kiosk\.css|js\/[a-z-]+\.js)$/.test(relative)) throw new AppError(404, '페이지를 찾지 못했어요.');
     const file = join(publicDir, relative);
     const content = await readFile(file);
     const types = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.svg': 'image/svg+xml' };
