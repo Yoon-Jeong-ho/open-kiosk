@@ -18,7 +18,7 @@ export const catalog = [
   { id: 'chocolate', name: '초콜릿', en: 'Chocolate', category: 'tea', price: 4500, temperatures: ['hot', 'iced'], description: '진한 코코아의 달콤한 한 잔', art: 'chocolate', color: '#e4d0c7' },
   { id: 'peach', name: '복숭아 아이스티', en: 'Peach iced tea', category: 'tea', price: 3800, temperatures: ['iced'], description: '산뜻한 복숭아 향의 차가운 차', art: 'tea', color: '#f0d6c7' },
   { id: 'lemon', name: '레몬에이드', en: 'Lemon ade', category: 'tea', price: 4500, temperatures: ['iced'], description: '레몬과 탄산수의 상큼한 만남', art: 'lemon', color: '#f2eac0' },
-];
+].map((p) => ({ ...p, addons: p.category === 'coffee' ? [{ id: 'hazelnut', name: '헤이즐넛 시럽', price: 500 }] : [] }));
 
 export const temperatureName = (value) => value === 'hot' ? '따뜻하게' : '차갑게';
 export const money = (value) => new Intl.NumberFormat('ko-KR').format(value);

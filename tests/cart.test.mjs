@@ -30,3 +30,31 @@ test('atomic validation preserves the previous cart when a later operation is in
   assert.throws(() => applyOperations(previous, [{ type: 'quantity', line_id: 'a', quantity: 1.5 }], menu));
   assert.throws(() => applyOperations(previous, [{ type: 'add', product_id: 'latte', temperature: 'hot', quantity: 20 }], menu));
 });
+
+test('two iced americanos can become one hot and one iced with syrup only on the iced drink', () => {
+  let cart = applyOperations([], [{ type: 'add', product_id: 'americano', temperature: 'iced', quantity: 2 }], menu);
+  cart = applyOperations(cart, [{ type: 'split_temperature', line_id: cart[0].id, quantity: 1, temperature: 'hot' }], menu);
+  const iced = cart.find((l) => l.temperature === 'iced');
+  cart = applyOperations(cart, [{ type: 'addons', line_id: iced.id, addons: ['hazelnut'], price: 1 }], menu);
+  const priced = pricedCart(cart, menu);
+  assert.equal(priced.reduce((n, l) => n + l.quantity, 0), 2);
+  assert.equal(priced.reduce((n, l) => n + l.subtotal, 0), 7500);
+  assert.deepEqual(priced.find((l) => l.temperature === 'hot').addons, []);
+  assert.deepEqual(priced.find((l) => l.temperature === 'iced').addon_names, ['헤이즐넛 시럽']);
+});
+test('different add-ons stay separate and removing an add-on merges matching drinks', () => {
+  let cart = applyOperations([], [{ type: 'add', product_id: 'americano', temperature: 'iced', quantity: 2 }], menu);
+  cart = applyOperations(cart, [{ type: 'addons', line_id: cart[0].id, quantity: 1, addons: ['hazelnut'] }], menu);
+  assert.equal(cart.length, 2);
+  const syrup = cart.find((l) => l.addons.length);
+  cart = applyOperations(cart, [{ type: 'temperature', line_id: syrup.id, temperature: 'hot' }], menu);
+  assert.deepEqual(cart.find((l) => l.id === syrup.id).addons, ['hazelnut']);
+  cart = applyOperations(cart, [{ type: 'temperature', line_id: syrup.id, temperature: 'iced' }, { type: 'addons', line_id: syrup.id, addons: [] }], menu);
+  assert.equal(cart.length, 1); assert.equal(cart[0].quantity, 2);
+});
+test('rejects invented, repeated, unavailable add-ons and invalid partial quantities atomically', () => {
+  const before = [{ id: 'a', product_id: 'americano', temperature: 'iced', quantity: 2 }];
+  for (const patch of [{ addons: ['free'] }, { addons: ['hazelnut', 'hazelnut'] }, { addons: ['hazelnut'], quantity: 3 }, { addons: ['hazelnut'], quantity: .5 }]) assert.throws(() => applyOperations(before, [{ type: 'addons', line_id: 'a', ...patch }], menu));
+  assert.throws(() => applyOperations([], [{ type: 'add', product_id: 'lemon', temperature: 'iced', quantity: 1, addons: ['hazelnut'] }], menu));
+  assert.equal(before[0].quantity, 2); assert.equal(before[0].addons, undefined);
+});

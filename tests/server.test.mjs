@@ -108,3 +108,33 @@ test('deleting a synthetic account removes its session and linked kiosk access',
   assert.equal((await customer('/api/kiosk/state')).status, 401);
   assert.equal((await customer('/api/kiosk/bootstrap', 'POST', { store: store.store_id })).status, 404);
 });
+
+test('syrup pricing and options persist through final confirmation into the merchant order', async () => {
+  const owner = client(), customer = client(); const store = await signup(owner);
+  let state = await bootstrap(customer, store.store_id);
+  state = (await customer('/api/kiosk/action', 'POST', { revision: state.revision, operation: { type: 'add', product_id: 'americano', temperature: 'iced', quantity: 2 } })).data;
+  state = (await customer('/api/kiosk/action', 'POST', { revision: state.revision, operation: { type: 'split_temperature', line_id: state.cart[0].id, temperature: 'hot', quantity: 1 } })).data;
+  const iced = state.cart.find((l) => l.temperature === 'iced');
+  state = (await customer('/api/kiosk/action', 'POST', { revision: state.revision, operation: { type: 'addons', line_id: iced.id, addons: ['hazelnut'], price: 0, addon_total: 0 } })).data;
+  assert.equal(state.total, 7500);
+  assert.equal((await customer('/api/kiosk/confirm', 'POST', { revision: state.revision, total: 7000, confirmed: true })).status, 409);
+  assert.equal((await customer('/api/kiosk/confirm', 'POST', { revision: state.revision, total: 7500, confirmed: true })).status, 201);
+  const order = (await owner('/api/merchant/dashboard')).data.orders[0];
+  assert.equal(order.total, 7500);
+  assert.deepEqual(order.lines.find((l) => l.temperature === 'iced').addon_names, ['헤이즐넛 시럽']);
+  assert.deepEqual(order.lines.find((l) => l.temperature === 'hot').addons, []);
+});
+test('demo video supports playback, byte ranges, seeking and captions without exposing other files', async () => {
+  const path = base + '/media/voice-order-demo.mp4';
+  const head = await fetch(path, { method: 'HEAD' });
+  assert.equal(head.status, 200); assert.equal(head.headers.get('content-type'), 'video/mp4'); assert.equal(head.headers.get('accept-ranges'), 'bytes');
+  const size = Number(head.headers.get('content-length')); assert.ok(size > 10000);
+  const partial = await fetch(path, { headers: { Range: 'bytes=0-31' } });
+  assert.equal(partial.status, 206); assert.equal(partial.headers.get('content-range'), `bytes 0-31/${size}`);
+  const bytes = Buffer.from(await partial.arrayBuffer()); assert.equal(bytes.length, 32); assert.equal(bytes.subarray(4,8).toString(), 'ftyp');
+  const suffix = await fetch(path, { headers: { Range: 'bytes=-16' } }); assert.equal(suffix.status, 206); assert.equal((await suffix.arrayBuffer()).byteLength, 16);
+  for (const range of [`bytes=${size}-`, 'bytes=32-10', 'bytes=-0', 'bytes=0-1,4-5']) assert.equal((await fetch(path, { headers: { Range: range } })).status, 416);
+  assert.match(await (await fetch(base + '/media/voice-order-demo.vtt')).text(), /^WEBVTT/);
+  assert.equal((await fetch(base + '/media/voice-order-demo.jpg')).headers.get('content-type'), 'image/jpeg');
+  assert.equal((await fetch(base + '/media/transcripts.json')).status, 404);
+});

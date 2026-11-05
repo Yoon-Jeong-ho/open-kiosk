@@ -35,7 +35,7 @@ export function applyPresentation(current, change) {
 export function parsePresentationCommand(input) {
   const text = String(input).trim().toLowerCase();
   if (!text || /(?:[0-9一二三四五六七八九十한두세네])\s*(?:잔|컵|杯)|\b(?:add|order|cups?|hot|iced)\b|주문해|추가해|따뜻|차갑|注文して|点一/.test(text)) return null;
-  if (/아메리카노|라[테떼]|말차|초콜릿|아이스티|레몬에이드|americano|latte|coffee|matcha|chocolate|lemonade|アメリカーノ|コーヒー|ラテ|チョコ|ティー|美式|拿铁|咖啡|抹茶|巧克力|冰茶|柠檬/.test(text)) return null;
+  if (/시럽|헤이즐넛|syrup|シロップ|ヘーゼル|糖浆|아메리카노|라[테떼]|말차|초콜릿|아이스티|레몬에이드|americano|latte|coffee|matcha|chocolate|lemonade|アメリカーノ|コーヒー|ラテ|チョコ|ティー|美式|拿铁|咖啡|抹茶|巧克力|冰茶|柠檬/.test(text)) return null;
   let language = null;
   let languageCount = 0;
   for (const [id, pattern] of [

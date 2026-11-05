@@ -16,7 +16,7 @@ test('text and photo requests can be adjusted independently in both directions',
   assert.equal(initial.textScale, 1);
 });
 test('mixed orders and opposing display adjustments are never consumed as display-only', () => {
-  for (const text of ['아메리카노 두 잔 주세요, 글씨도 크게', 'Add a latte and make text bigger', 'アメリカーノ二つ、文字も大きくして', '来杯美式，放大文字', '사진은 작게 글씨는 크게', '영어 대신 한국어로']) assert.equal(parsePresentationCommand(text), null, text);
+  for (const text of ['아메리카노 두 잔 주세요, 글씨도 크게', 'Add a latte and make text bigger', 'アメリカーノ二つ、文字も大きくして', '来杯美式，放大文字', '사진은 작게 글씨는 크게', '영어 대신 한국어로', '차가운 거에 헤이즐넛 시럽 추가하고 화면 크게']) assert.equal(parsePresentationCommand(text), null, text);
 });
 test('display requests work in English, Japanese and Chinese', () => {
   for (const text of ['Make the text bigger', '文字を大きくして', '放大文字']) {

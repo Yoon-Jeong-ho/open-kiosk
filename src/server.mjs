@@ -1,6 +1,6 @@
 import http from 'node:http';
 import { readFile, mkdir, chmod, stat } from 'node:fs/promises';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, createReadStream } from 'node:fs';
 import { parseEnv } from 'node:util';
 import { resolve, dirname, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -288,10 +288,26 @@ async function handle(req, res) {
     if (!['GET', 'HEAD'].includes(method)) throw new AppError(405, '지원하지 않는 요청이에요.');
     const pages = ['/', '/pricing', '/signup', '/checkout', '/dashboard', '/kiosk', '/tour', '/privacy', '/accessibility'];
     let relative = pages.includes(path) ? 'index.html' : decodeURIComponent(path).replace(/^\//, '');
-    if (!/^(index\.html|favicon\.svg|style\.css|kiosk\.css|js\/[a-z-]+\.js)$/.test(relative)) throw new AppError(404, '페이지를 찾지 못했어요.');
+    if (!/^(index\.html|favicon\.svg|style\.css|kiosk\.css|js\/[a-z-]+\.js|media\/voice-order-demo\.(mp4|jpg|vtt))$/.test(relative)) throw new AppError(404, '페이지를 찾지 못했어요.');
     const file = join(publicDir, relative);
+    if (relative === 'media/voice-order-demo.mp4') {
+      const { size } = await stat(file); let start = 0, end = size - 1;
+      if (req.headers.range) {
+        const range = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range);
+        if (range && (range[1] || range[2])) {
+          if (!range[1]) start = Math.max(0, size - Number(range[2]));
+          else { start = Number(range[1]); if (range[2]) end = Math.min(end, Number(range[2])); }
+        } else start = NaN;
+        if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start > end || start >= size || start < 0) {
+          res.writeHead(416, { 'Content-Range': `bytes */${size}`, 'Accept-Ranges': 'bytes' }); return res.end();
+        }
+      }
+      res.writeHead(req.headers.range ? 206 : 200, { 'Content-Type': 'video/mp4', 'Content-Length': end - start + 1, 'Accept-Ranges': 'bytes', 'Cache-Control': 'public, max-age=3600', ...(req.headers.range ? { 'Content-Range': `bytes ${start}-${end}/${size}` } : {}) });
+      if (method === 'HEAD') return res.end();
+      const stream = createReadStream(file, { start, end }); stream.on('error', () => res.destroy()); res.on('close', () => stream.destroy()); return stream.pipe(res);
+    }
     const content = await readFile(file);
-    const types = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.svg': 'image/svg+xml' };
+    const types = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.svg': 'image/svg+xml', '.jpg': 'image/jpeg', '.vtt': 'text/vtt; charset=utf-8' };
     res.writeHead(200, { 'Content-Type': types[extname(file)], 'Cache-Control': 'no-cache' });
     res.end(method === 'HEAD' ? undefined : content);
   } catch (e) {

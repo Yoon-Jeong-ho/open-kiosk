@@ -23,6 +23,7 @@ const messages = {
   changeTemp: ['온도 변경', 'Change temperature', '温度を変更', '更改温度'], remove: ['삭제', 'Remove', '削除', '删除'],
   less: ['수량 줄이기', 'Decrease quantity', '数量を減らす', '减少数量'], more: ['수량 늘리기', 'Increase quantity', '数量を増やす', '增加数量'],
   quantity: ['수량', 'Quantity', '数量', '数量'], chooseTemp: ['온도를 골라 주세요', 'Choose a temperature', '温度をお選びください', '请选择温度'],
+  addons: ['추가 옵션', 'Add-ons', '追加オプション', '附加选项'], editAddons: ['옵션 변경', 'Edit add-ons', 'オプション変更', '更改选项'], saveAddons: ['옵션 적용', 'Apply add-ons', 'オプションを適用', '应用选项'], hazelnut: ['헤이즐넛 시럽', 'Hazelnut syrup', 'ヘーゼルナッツシロップ', '榛果糖浆'], perCup: ['잔당', 'per drink', '1杯あたり', '每杯'],
   add: ['{count}잔 담기 · {price}', 'Add {count} · {price}', '{count}杯追加 · {price}', '添加{count}杯 · {price}'],
   review: ['주문 확인', 'Review order', '注文を確認', '确认订单'], help: ['도움 요청', 'Get help', 'サポート', '寻求帮助'],
   confirmTitle: ['이대로 주문할까요?', 'Ready to order?', 'この内容で注文しますか？', '确认下单吗？'],
@@ -72,6 +73,7 @@ const labels = {
   lemon: ['레몬에이드', 'Lemon ade', 'レモネード', '柠檬气泡饮'],
 };
 export const isLanguage = (value) => languages.some((l) => l.id === value);
+export const addonName = (id, language = 'ko') => tr(language, id);
 export function tr(language, key, values = {}) {
   const index = Math.max(0, languages.findIndex((l) => l.id === language));
   return (messages[key]?.[index] || messages[key]?.[0] || key).replace(/\{(\w+)\}/g, (_, name) => String(values[name] ?? ''));
