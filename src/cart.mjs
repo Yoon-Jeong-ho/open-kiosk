@@ -32,16 +32,16 @@ export function applyOperations(previous, operations, products) {
       const p = findProduct(op.product_id);
       if (!p.available) fail(`${p.name}은 지금 품절이에요. 다른 메뉴를 골라 주세요.`);
       const q = op.quantity ?? 1;
-      if (!quantity(q)) fail('수량은 1잔부터 20잔까지 선택할 수 있어요.');
-      const temperature = op.temperature ?? p.temperatures[0];
-      if (!p.temperatures.includes(temperature)) fail('이 메뉴에서 선택할 수 없는 온도예요.');
+      if (!quantity(q)) fail('수량은 1부터 20까지 선택할 수 있어요.');
+      const temperature = p.temperatures.length ? (op.temperature ?? p.temperatures[0]) : null;
+      if (p.temperatures.length ? !p.temperatures.includes(temperature) : op.temperature != null) fail('이 메뉴에서 선택할 수 없는 온도예요.');
       cart.push({ id: randomBytes(6).toString('hex'), product_id: p.id, temperature, quantity: q, addons: checkedAddons(op.addons, p) });
     } else if (op.type === 'remove') {
       findLine(op.line_id);
       cart = cart.filter((line) => line.id !== op.line_id);
     } else if (op.type === 'quantity') {
       const line = findLine(op.line_id);
-      if (!quantity(op.quantity, 0)) fail('수량은 0잔부터 20잔까지 선택할 수 있어요.');
+      if (!quantity(op.quantity, 0)) fail('수량은 0부터 20까지 선택할 수 있어요.');
       line.quantity = op.quantity;
       cart = cart.filter((line) => line.quantity > 0);
     } else if (op.type === 'temperature' || op.type === 'split_temperature') {
@@ -71,7 +71,7 @@ export function applyOperations(previous, operations, products) {
     const same = merged.find((l) => l.product_id === line.product_id && l.temperature === line.temperature && JSON.stringify(l.addons) === JSON.stringify(line.addons));
     if (same) same.quantity += line.quantity; else merged.push(line);
   }
-  if (merged.reduce((n, l) => n + l.quantity, 0) > 20) fail('한 주문에서는 최대 20잔까지 선택할 수 있어요.');
+  if (merged.reduce((n, l) => n + l.quantity, 0) > 20) fail('한 주문에서는 메뉴를 최대 20개까지 선택할 수 있어요.');
   return merged;
 }
 
@@ -82,6 +82,6 @@ export function pricedCart(cart, products) {
     const addons = checkedAddons(line.addons, product);
     const selected = addons.map((id) => product.addons.find((a) => a.id === id));
     const addon_total = selected.reduce((n, a) => n + a.price, 0); const price = product.price + addon_total;
-    return { ...line, addons, addon_names: selected.map((a) => a.name), addon_total, base_price: product.price, name: product.name, price, subtotal: price * line.quantity, available: product.available };
+    return { ...line, unit: product.unit, addons, addon_names: selected.map((a) => a.name), addon_total, base_price: product.price, name: product.name, price, subtotal: price * line.quantity, available: product.available };
   });
 }

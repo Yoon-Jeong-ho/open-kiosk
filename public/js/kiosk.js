@@ -1,5 +1,6 @@
 import { $, $$, api, e, icon, drinkArt, dialog, errorPanel } from './ui.js';
-import { languages, tr, productName, priceText, addonName } from './locale.js';
+import { languages, tr, productName, priceText, addonName, quantityText } from './locale.js';
+import { parseMenuNavigation, isRecommendationRequest } from './menu-intent.js';
 import { executeVoiceAudio } from './voice-flow.js';
 import { normalizePreferences, applyPresentation, parsePresentationCommand } from './presentation.js';
 
@@ -7,14 +8,21 @@ export async function kioskPage(main) {
   let alive = true, busy = false, state, category = 'all', recording, recordTimer, micPending = false, audioConsent = false, uiRevision = 0;
   const controller = new AbortController();
   const params = new URLSearchParams(location.search);
-  const demoMode = params.get('demo') === 'voice' && (!params.get('store') || params.get('store') === 'demo');
+  const menuDemo = params.get('demo') === 'menu';
+  const demoMode = ['voice', 'menu'].includes(params.get('demo')) && (!params.get('store') || params.get('store') === 'demo');
+  const demoSamples = menuDemo ? [
+    { url: '/media/menu-sample-01.mp3', label: '01  배고프면 브런치' },
+    { url: '/media/menu-sample-02.mp3', label: '02  달달한 디저트' },
+    { url: '/media/menu-sample-03.mp3', label: '03  예산에 맞는 추천' },
+  ] : ['글자·그림 키우기', '아이스 두 잔 주문', '한 잔만 따뜻하게', '차가운 잔에 시럽'].map((label, i) => ({ url: `/media/voice-sample-0${i + 1}.mp3`, label: `0${i + 1}  ${label}` }));
   let voicePhase = 'idle', heardText = '', levelStop = () => {}, demoAudio, demoCancel = () => {}, demoIndex = 0, demoPlaying = false, demoRunning = false;
   let prefs = normalizePreferences();
   if (!demoMode) try { prefs = normalizePreferences(JSON.parse(localStorage.getItem('ok_preferences') || '{}')); } catch {}
   const t = (key, values) => tr(prefs.language, key, values);
   const name = (p) => productName(p, prefs.language);
   const money = (n) => priceText(n, prefs.language);
-  const temperature = (n) => t(n === 'hot' ? 'hot' : 'iced');
+  const temperature = (n) => n === 'hot' ? t('hot') : n === 'iced' ? t('iced') : '';
+  const countText = (n, product) => quantityText(n, product, prefs.language);
   let lastReply = t('initial');
   const speak = (text, force = false) => {
     if ((!prefs.read && !force) || !('speechSynthesis' in window) || recording || demoPlaying) return;
@@ -43,7 +51,15 @@ export async function kioskPage(main) {
     $('.modal-close', d).setAttribute('aria-label', t('close')); positionDialog(d); return d;
   };
   const paintMenu = () => {
+    $('.kiosk-menu-title').textContent = t(category === 'all' ? 'menuTitle' : category);
     $('#kiosk-menu').innerHTML = state.products.filter((p) => category === 'all' || p.category === category).map((p) => `<button class="product-card ${p.available ? '' : 'sold-out'}" data-product="${e(p.id)}" ${p.available ? '' : 'disabled'} aria-label="${e(name(p))}, ${e(money(p.price))}${p.available ? '' : ', ' + e(t('unavailable'))}"><span class="product-art" style="--product-bg:${e(p.color)}" aria-hidden="true">${drinkArt(p)}<span class="product-add">${icon('plus')}</span>${p.available ? '' : `<b class="sold-out-label">${e(t('unavailable'))}</b>`}</span><span class="product-name">${e(name(p))}</span><span class="product-price">${e(money(p.price))}</span></button>`).join('');
+  };
+  const navigateMenu = (next, announce = true) => {
+    if (!['all', 'coffee', 'tea', 'dessert', 'brunch'].includes(next)) return;
+    category = next;
+    $$('[data-category]').forEach((button) => { const selected = button.dataset.category === category; button.classList.toggle('active', selected); button.setAttribute('aria-pressed', String(selected)); });
+    paintMenu(); $('#kiosk-menu').scrollTop = 0;
+    if (announce) status(t('menuMoved', { category: t(category) }));
   };
   const addonText = (line) => (line.addons || []).map((id) => addonName(id, prefs.language)).join(' · ');
   const addonControls = (product, selected = []) => (product.addons || []).length ? `<fieldset class="addon-options"><legend>${e(t('addons'))}</legend>${product.addons.map((a) => `<label><input type="checkbox" name="addon" value="${e(a.id)}" ${selected.includes(a.id) ? 'checked' : ''}><span>${e(addonName(a.id, prefs.language))}<small>+${e(money(a.price))} ${e(t('perCup'))}</small></span></label>`).join('')}</fieldset>` : '';
@@ -51,7 +67,7 @@ export async function kioskPage(main) {
     const focused = document.activeElement?.closest('[data-cart-action]');
     const focusKey = focused ? { id: focused.dataset.line, action: focused.dataset.cartAction } : null;
     $('#cart-count').textContent = state.count;
-    $('#cart-lines').innerHTML = state.cart.length ? state.cart.map((l) => `<article class="cart-line"><div class="cart-line-head"><h3>${e(name(l))}</h3><button class="icon-btn" data-cart-action="remove" data-line="${e(l.id)}" aria-label="${e(name(l))} ${e(temperature(l.temperature))} ${e(t('remove'))}">${icon('close')}</button></div><div class="cart-line-options"><span class="temp-pill ${l.temperature}">${e(temperature(l.temperature))}</span>${(state.products.find((p) => p.id === l.product_id)?.temperatures.length || 0) > 1 ? `<button class="small-text-btn" data-cart-action="temperature" data-line="${e(l.id)}" aria-label="${e(name(l))} ${e(t('changeTemp'))}">${e(t('changeTemp'))} ${icon('refresh')}</button>` : ''}${l.available ? '' : `<span class="form-error">${e(t('unavailable'))}</span>`}</div>${(state.products.find((p) => p.id === l.product_id)?.addons?.length || 0) ? `<div class="cart-line-addons">${l.addons?.length ? `<span class="addon-pill">${e(addonText(l))} · +${e(money(l.addon_total))}</span>` : ''}<button class="small-text-btn" data-cart-action="addons" data-line="${e(l.id)}" aria-label="${e(name(l))} ${e(temperature(l.temperature))} ${e(t('editAddons'))}">${e(t('editAddons'))}</button></div>` : ''}<div class="cart-line-bottom"><div class="quantity-control"><button data-cart-action="minus" data-line="${e(l.id)}" aria-label="${e(name(l))} ${e(temperature(l.temperature))} ${e(t('less'))}">${icon('minus')}</button><span>${l.quantity}</span><button data-cart-action="plus" data-line="${e(l.id)}" aria-label="${e(name(l))} ${e(temperature(l.temperature))} ${e(t('more'))}">${icon('plus')}</button></div><strong>${e(money(l.subtotal))}</strong></div></article>`).join('') : `<div class="cart-empty">${icon('bag')}<b>${e(t('empty'))}</b></div>`;
+    $('#cart-lines').innerHTML = state.cart.length ? state.cart.map((l) => `<article class="cart-line"><div class="cart-line-head"><h3>${e(name(l))}</h3><button class="icon-btn" data-cart-action="remove" data-line="${e(l.id)}" aria-label="${e(name(l))} ${e(temperature(l.temperature))} ${e(t('remove'))}">${icon('close')}</button></div><div class="cart-line-options">${l.temperature ? `<span class="temp-pill ${l.temperature}">${e(temperature(l.temperature))}</span>` : ''}${(state.products.find((p) => p.id === l.product_id)?.temperatures.length || 0) > 1 ? `<button class="small-text-btn" data-cart-action="temperature" data-line="${e(l.id)}" aria-label="${e(name(l))} ${e(t('changeTemp'))}">${e(t('changeTemp'))} ${icon('refresh')}</button>` : ''}${l.available ? '' : `<span class="form-error">${e(t('unavailable'))}</span>`}</div>${(state.products.find((p) => p.id === l.product_id)?.addons?.length || 0) ? `<div class="cart-line-addons">${l.addons?.length ? `<span class="addon-pill">${e(addonText(l))} · +${e(money(l.addon_total))}</span>` : ''}<button class="small-text-btn" data-cart-action="addons" data-line="${e(l.id)}" aria-label="${e(name(l))} ${e(temperature(l.temperature))} ${e(t('editAddons'))}">${e(t('editAddons'))}</button></div>` : ''}<div class="cart-line-bottom"><div class="quantity-control"><button data-cart-action="minus" data-line="${e(l.id)}" aria-label="${e(name(l))} ${e(temperature(l.temperature))} ${e(t('less'))}">${icon('minus')}</button><span>${l.quantity}</span><button data-cart-action="plus" data-line="${e(l.id)}" aria-label="${e(name(l))} ${e(temperature(l.temperature))} ${e(t('more'))}">${icon('plus')}</button></div><strong>${e(money(l.subtotal))}</strong></div></article>`).join('') : `<div class="cart-empty">${icon('bag')}<b>${e(t('empty'))}</b></div>`;
     $('#cart-total').textContent = money(state.total);
     $('#review-order').disabled = !state.cart.length || busy || state.cart.some((l) => !l.available);
     $('#clear-cart').disabled = !state.cart.length || busy;
@@ -100,7 +116,7 @@ export async function kioskPage(main) {
   const setBusy = (value) => {
     busy = value; $('#send-order').disabled = value || !!recording || micPending; $('#voice-order').disabled = value || micPending || demoRunning;
     $('#order-text').disabled = value || !!recording || micPending;
-    if ($('#demo-voice-next')) $('#demo-voice-next').disabled = value || !!recording || micPending || demoRunning || demoIndex >= 4;
+    if ($('#demo-voice-next')) $('#demo-voice-next').disabled = value || !!recording || micPending || demoRunning || demoIndex >= demoSamples.length;
     if ($('#demo-run-all')) $('#demo-run-all').disabled = value || !!recording || micPending || demoRunning;
     $('#composer').setAttribute('aria-busy', String(value));
     $('#send-order').innerHTML = value ? `<span class="button-spinner"></span><span class="sr-only">${e(t('busy'))}</span>` : icon('arrow'); paintCart();
@@ -122,19 +138,48 @@ export async function kioskPage(main) {
     $('#save-addons', d).onclick = () => { const addons = $$('input[name=addon]:checked', d).map((el) => el.value); d.close(); change({ type: 'addons', line_id: line.id, addons }); };
   };
   const chooseProduct = (product) => {
+    const needsTemp = product.temperatures.length > 0;
     let selected = product.temperatures.length === 1 ? product.temperatures[0] : null; let q = 1; let selectedAddons = [];
-    const d = modal(`<div class="product-modal-art" style="--product-bg:${e(product.color)}" aria-hidden="true">${drinkArt(product)}</div><div class="product-modal-title"><h2>${e(name(product))}</h2><b>${e(money(product.price))}</b></div><fieldset class="temperature-options"><legend>${e(t('chooseTemp'))}</legend>${product.temperatures.map((v) => `<label><input type="radio" name="temperature" value="${v}" ${selected === v ? 'checked' : ''}><span>${v === 'hot' ? '☀' : '❄'} ${e(temperature(v))}</span></label>`).join('')}</fieldset>${addonControls(product)}<div class="product-quantity"><b>${e(t('quantity'))}</b><div class="quantity-control"><button id="quantity-minus" aria-label="${e(t('less'))}">${icon('minus')}</button><span id="quantity-value">1</span><button id="quantity-plus" aria-label="${e(t('more'))}">${icon('plus')}</button></div></div><button id="add-to-cart" class="btn btn-dark full-width" disabled></button>`, 'product-modal');
-    const update = () => { $('#quantity-value', d).textContent = q; $('#quantity-minus', d).disabled = q === 1; $('#quantity-plus', d).disabled = q === 20; $('#add-to-cart', d).disabled = !selected; $('#add-to-cart', d).textContent = selected ? t('add', { count: q, price: money(q * (product.price + (product.addons || []).filter((a) => selectedAddons.includes(a.id)).reduce((n, a) => n + a.price, 0))) }) : t('chooseTemp'); };
+    const d = modal(`<div class="product-modal-art" style="--product-bg:${e(product.color)}" aria-hidden="true">${drinkArt(product)}</div><div class="product-modal-title"><h2>${e(name(product))}</h2><b>${e(money(product.price))}</b></div>${needsTemp ? `<fieldset class="temperature-options"><legend>${e(t('chooseTemp'))}</legend>${product.temperatures.map((v) => `<label><input type="radio" name="temperature" value="${v}" ${selected === v ? 'checked' : ''}><span>${v === 'hot' ? '☀' : '❄'} ${e(temperature(v))}</span></label>`).join('')}</fieldset>` : ''}${addonControls(product)}<div class="product-quantity"><b>${e(t('quantity'))}</b><div class="quantity-control"><button id="quantity-minus" aria-label="${e(t('less'))}">${icon('minus')}</button><span id="quantity-value">1</span><button id="quantity-plus" aria-label="${e(t('more'))}">${icon('plus')}</button></div></div><button id="add-to-cart" class="btn btn-dark full-width" disabled></button>`, 'product-modal');
+    const update = () => { $('#quantity-value', d).textContent = q; $('#quantity-minus', d).disabled = q === 1; $('#quantity-plus', d).disabled = q === 20; $('#add-to-cart', d).disabled = needsTemp && !selected; $('#add-to-cart', d).textContent = !needsTemp || selected ? t('add', { quantity: countText(q, product), price: money(q * (product.price + (product.addons || []).filter((a) => selectedAddons.includes(a.id)).reduce((n, a) => n + a.price, 0))) }) : t('chooseTemp'); };
     $$('input[name=temperature]', d).forEach((r) => r.onchange = () => { selected = r.value; update(); });
     $$('input[name=addon]', d).forEach((c) => c.onchange = () => { selectedAddons = $$('input[name=addon]:checked', d).map((el) => el.value); update(); });
     $('#quantity-minus', d).onclick = () => { q = Math.max(1, q - 1); update(); };
     $('#quantity-plus', d).onclick = () => { q = Math.min(20, q + 1); update(); };
     $('#add-to-cart', d).onclick = () => { d.close(); change({ type: 'add', product_id: product.id, quantity: q, temperature: selected, addons: selectedAddons }); }; update();
   };
+  const addRecommendation = (suggestion) => {
+    const products = suggestion.product_ids.map((id) => state.products.find((p) => p.id === id));
+    if (products.some((p) => !p?.available)) return status(t('unavailable'), true);
+    const d = modal(`<div class="modal-heading"><h2>${e(t('comboOptions'))}</h2></div><div class="bundle-items">${products.map((p) => `<article><div><b>${e(name(p))}</b><span>${e(countText(1, p))} · ${e(money(p.price))}</span></div>${p.temperatures.length > 1 ? `<fieldset class="temperature-options"><legend>${e(name(p))} · ${e(t('chooseTemp'))}</legend>${p.temperatures.map((temp) => `<label><input type="radio" name="bundle-${e(p.id)}" value="${temp}"><span>${e(temperature(temp))}</span></label>`).join('')}</fieldset>` : p.temperatures.length ? `<small>${e(temperature(p.temperatures[0]))}</small>` : ''}</article>`).join('')}</div><button id="add-recommendation" class="btn btn-dark full-width">${e(t('addCombo', { price: money(products.reduce((sum, p) => sum + p.price, 0)) }))}</button>`);
+    const selectedTemperature = (p) => p.temperatures.length > 1 ? $(`input[name="bundle-${p.id}"]:checked`, d)?.value : p.temperatures[0] || null;
+    const update = () => { $('#add-recommendation', d).disabled = products.some((p) => p.temperatures.length > 1 && !selectedTemperature(p)); };
+    $$('input', d).forEach((input) => input.onchange = update); update();
+    $('#add-recommendation', d).onclick = async () => {
+      const operations = products.map((p) => ({ type: 'add', product_id: p.id, quantity: 1, temperature: selectedTemperature(p) }));
+      d.close(); setBusy(true);
+      try { const next = await api('/api/kiosk/action', { method: 'POST', body: { revision: state.revision, operations } }); if (alive) { acceptState(next); status(t('cartChanged')); } }
+      catch (err) { await fail(err); } finally { if (alive) setBusy(false); }
+    };
+  };
+  const showRecommendations = (suggestions) => {
+    const d = modal(`<div class="modal-heading"><h2>${e(t('recommendResults'))}</h2><p>${e(t('recommendBasis'))}</p></div><div class="recommendation-list">${suggestions.map((suggestion, i) => `<article><h3>${e(suggestion.title)}</h3><p>${e(suggestion.reason)}</p><div class="recommended-items">${suggestion.product_ids.map((id) => { const p = state.products.find((p) => p.id === id); return `<div><span class="recommend-art" style="--product-bg:${e(p.color)}" aria-hidden="true">${drinkArt(p)}</span><span><b>${e(name(p))}</b><small>${e(countText(1, p))} · ${e(money(p.price))}</small></span></div>`; }).join('')}</div><div class="recommendation-total"><strong>${e(money(suggestion.total))}</strong><button class="btn btn-outline" data-recommendation="${i}">${e(t('chooseCombo'))}</button></div></article>`).join('')}</div>`, 'recommendations-modal');
+    $$('[data-recommendation]', d).forEach((button) => button.onclick = () => { d.close(); addRecommendation(suggestions[Number(button.dataset.recommendation)]); });
+  };
+  const sendRecommendation = async (text) => {
+    if (!text.trim() || busy) return; setBusy(true);
+    try { await interpretRequest(text); } catch (err) { await fail(err); } finally { if (alive) setBusy(false); }
+  };
+  const openRecommendationPrompt = () => {
+    if (busy || recording) return;
+    const d = modal(`<div class="modal-heading"><h2>${e(t('recommendTitle'))}</h2></div><div class="recommendation-choices">${[['recommendMeal', 'promptMeal'], ['recommendSweet', 'promptSweet'], ['recommendBudget', 'promptBudget']].map(([label, prompt]) => `<button class="btn btn-outline" data-recommend-prompt="${prompt}">${e(t(label))}</button>`).join('')}</div><form id="recommendation-form"><label class="form-label" for="recommendation-text">${e(t('recommendInput'))}</label><input class="form-input" id="recommendation-text" maxlength="400" placeholder="${e(t('recommendPlaceholder'))}"><button class="btn btn-dark full-width" type="submit">${e(t('recommendSubmit'))}</button></form>`);
+    $$('[data-recommend-prompt]', d).forEach((button) => button.onclick = () => { d.close(); sendRecommendation(t(button.dataset.recommendPrompt)); });
+    $('#recommendation-form', d).onsubmit = (event) => { event.preventDefault(); const text = $('#recommendation-text', d).value.trim(); if (!text) return; d.close(); sendRecommendation(text); };
+  };
   const reviewOrder = () => {
     if (!state.cart.length || busy) return;
     const review = structuredClone(state);
-    const d = modal(`<div class="modal-heading"><h2>${e(t('confirmTitle'))}</h2></div><div class="review-lines">${review.cart.map((l) => `<div><span><b>${e(name(l))}</b><small>${e(temperature(l.temperature))} × ${l.quantity}${l.addons?.length ? `<br>${e(addonText(l))}` : ''}</small></span><strong>${e(money(l.subtotal))}</strong></div>`).join('')}</div><div class="review-total"><b>${e(t('total'))}</b><strong>${e(money(review.total))}</strong></div><p class="form-footnote">${e(t('demo'))}</p><p id="confirm-error" class="form-error" role="alert"></p><button id="confirm-order" class="btn btn-dark full-width">${e(t('confirm'))} ${icon('arrow')}</button><button id="return-to-order" class="btn btn-plain full-width">${e(t('back'))}</button>`);
+    const d = modal(`<div class="modal-heading"><h2>${e(t('confirmTitle'))}</h2></div><div class="review-lines">${review.cart.map((l) => `<div><span><b>${e(name(l))}</b><small>${l.temperature ? e(temperature(l.temperature)) + ' · ' : ''}${e(countText(l.quantity, l))}${l.addons?.length ? `<br>${e(addonText(l))}` : ''}</small></span><strong>${e(money(l.subtotal))}</strong></div>`).join('')}</div><div class="review-total"><b>${e(t('total'))}</b><strong>${e(money(review.total))}</strong></div><p class="form-footnote">${e(t('demo'))}</p><p id="confirm-error" class="form-error" role="alert"></p><button id="confirm-order" class="btn btn-dark full-width">${e(t('confirm'))} ${icon('arrow')}</button><button id="return-to-order" class="btn btn-plain full-width">${e(t('back'))}</button>`);
     $('#return-to-order', d).onclick = () => d.close();
     $('#confirm-order', d).onclick = async () => {
       const btn = $('#confirm-order', d); btn.disabled = true;
@@ -153,14 +198,19 @@ export async function kioskPage(main) {
   const interpretRequest = async (text) => {
     const display = parsePresentationCommand(text, prefs);
     if (display) { applyUI(display); return; }
+    const navigation = parseMenuNavigation(text);
+    if (navigation) { navigateMenu(navigation); return; }
     const version = uiRevision; const language = prefs.language;
     status(t('busy'));
     const next = await api('/api/kiosk/interpret', { method: 'POST', body: { text, language, revision: state.revision }, signal: controller.signal });
     if (!alive) return;
     acceptState(next);
+    if (next.navigation) navigateMenu(next.navigation, false);
     if (uiRevision === version) applyUI(next.presentation || {}, false);
     status(language === prefs.language || next.presentation?.language === prefs.language ? next.reply : t('cartChanged'));
-    if (next.review) { setBusy(false); reviewOrder(); }
+    if (next.recommendations?.length) { setBusy(false); showRecommendations(next.recommendations); }
+    else if (isRecommendationRequest(text) && !/알레르|알러지|allerg|アレルギ|过敏|당뇨|diabet/i.test(text)) status(t('noRecommendations'));
+    else if (next.review) { setBusy(false); reviewOrder(); }
   };
   const submitText = async () => {
     const input = $('#order-text'); const text = input.value.trim(); if (!text || busy || recording || micPending) return;
@@ -248,9 +298,9 @@ export async function kioskPage(main) {
     $('#use-keyboard', d).onclick = () => { d.close(); $('#keyboard-entry').hidden = false; $('#keyboard-toggle').setAttribute('aria-expanded', 'true'); $('#order-text').focus(); };
   };
   const playDemoVoice = async () => {
-    if (busy || recording || demoIndex >= 4) return;
+    if (busy || recording || demoIndex >= demoSamples.length) return;
     $('#voice-panel').dataset.demoStep = String(demoIndex + 1);
-    const url = `/media/voice-sample-0${demoIndex + 1}.mp3`; heardText = ''; demoPlaying = true; setBusy(true); paintVoice('sample');
+    const url = demoSamples[demoIndex].url; heardText = ''; demoPlaying = true; setBusy(true); paintVoice('sample');
     if ('speechSynthesis' in window) speechSynthesis.cancel();
     demoAudio = new Audio(url); watchLevels(demoAudio);
     const finished = new Promise((resolve, reject) => { demoAudio.onended = () => resolve(true); demoAudio.onerror = () => reject(new Error(t('micUnavailable'))); demoCancel = () => { demoAudio?.pause(); resolve(false); }; });
@@ -264,7 +314,7 @@ export async function kioskPage(main) {
     } catch (err) { demoAudio?.pause(); levelStop(); demoPlaying = false; if (alive) { paintVoice('error'); await fail(err); } }
     finally {
       demoAudio = null;
-      if (alive) { setBusy(false); const labels = ['01  글자·그림 키우기', '02  아이스 두 잔 주문', '03  한 잔만 따뜻하게', '04  차가운 잔에 시럽']; $('#demo-voice-next').textContent = labels[demoIndex] || '시연 완료'; }
+      if (alive) { setBusy(false); $('#demo-voice-next').textContent = demoSamples[demoIndex]?.label || '시연 완료'; }
     }
   };
 
@@ -293,7 +343,7 @@ export async function kioskPage(main) {
     state = await api('/api/kiosk/bootstrap', { method: 'POST', body: { store: new URLSearchParams(location.search).get('store') || 'demo' } });
     if (location.pathname !== '/kiosk') return;
     const sizeControl = (kind, min, max) => `<div class="size-control"><label for="${kind}-scale-input" data-i18n="${kind === 'text' ? 'textSize' : 'imageSize'}"></label><output id="${kind}-scale-value" for="${kind}-scale-input"></output><div><button data-size="${kind}" data-delta="-1" aria-label="${e(t(kind === 'text' ? 'textSize' : 'imageSize'))} ${e(t('smaller'))}">${icon('minus')}</button><input id="${kind}-scale-input" type="range" min="${min}" max="${max}" step=".05"><button data-size="${kind}" data-delta="1" aria-label="${e(t(kind === 'text' ? 'textSize' : 'imageSize'))} ${e(t('larger'))}">${icon('plus')}</button></div></div>`;
-    main.innerHTML = `<section class="kiosk-experience${demoMode ? ' voice-demo-mode' : ''}"><header class="experience-bar"><a class="experience-back" href="/">${icon('arrow')}<span data-i18n="siteBack"></span></a><span class="experience-title" data-i18n="experience"></span><span class="experience-demo" data-i18n="demo"></span><a href="/privacy" target="_blank" rel="noopener" class="experience-data" data-i18n="dataNotice"></a></header>${demoMode ? '<div class="voice-demo-toolbar"><span>합성 음성 시연 · 실제 음성 인식·주문 처리</span><div><button class="btn btn-dark btn-sm" id="demo-run-all">처음부터 연속 시연</button><button class="btn btn-outline btn-sm" id="demo-voice-next">01  글자·그림 키우기</button></div></div>' : ''}<div class="device-shell"><span class="device-camera" aria-hidden="true"></span><div class="device-screen"><div class="kiosk-app"><header class="kiosk-header"><span class="kiosk-store-name">${e(state.store.name)}</span><div class="kiosk-tools"><label class="language-picker"><span class="sr-only" data-i18n="language"></span><select id="language-select">${languages.map((v) => `<option value="${v.id}">${v.label}</option>`).join('')}</select></label><button id="view-settings-toggle" aria-expanded="false" aria-controls="view-settings">${icon('type')}<span data-i18n="view"></span></button><button data-pref="read" aria-pressed="false">${icon('volume')}<span data-i18n="read"></span></button></div></header><section class="kiosk-view-settings" id="view-settings" hidden aria-label="${e(t('view'))}"><div class="view-settings-heading"><strong data-i18n="view"></strong><button class="icon-btn" id="close-settings" data-label="close">${icon('close')}</button></div>${sizeControl('text', .9, 1.6)}${sizeControl('image', .75, 1.5)}<div class="view-settings-bottom"><button id="reset-sizes" data-i18n="reset"></button><button data-pref="contrast" aria-pressed="false" data-i18n="contrast"></button></div></section><div class="kiosk-layout"><section class="kiosk-selection"><h1 class="kiosk-menu-title" data-i18n="menuTitle"></h1><div class="assistant-box" id="assistant-box"><span class="assistant-avatar" aria-hidden="true">✳</span><p id="assistant-message" aria-live="polite" aria-atomic="true"></p><button id="repeat-message" class="icon-btn" data-label="repeat">${icon('volume')}</button></div><div class="category-tabs" role="group" aria-label="${e(t('all'))}"><button class="active" data-category="all" aria-pressed="true" data-i18n="all"></button><button data-category="coffee" aria-pressed="false" data-i18n="coffee"></button><button data-category="tea" aria-pressed="false" data-i18n="tea"></button></div><div class="kiosk-menu" id="kiosk-menu"></div><form class="composer" id="composer"><div class="voice-panel" id="voice-panel" data-phase="idle"><button type="button" class="voice-btn" id="voice-order"></button><div class="voice-body"><p id="voice-state" role="status"></p><div class="voice-wave" aria-hidden="true">${Array.from({ length: 16 }, () => '<i></i>').join('')}</div><div class="voice-caption" id="voice-caption" hidden><small data-i18n="heard"></small><p id="voice-heard"></p></div></div><button type="button" class="voice-keyboard-toggle" id="keyboard-toggle" data-label="keyboard" aria-expanded="false" aria-controls="keyboard-entry">${icon('keyboard')}<span data-i18n="keyboard"></span></button></div><div id="keyboard-entry" hidden><div class="composer-input-row"><label class="sr-only" for="order-text" data-i18n="inputLabel"></label><input id="order-text" maxlength="500" autocomplete="off" enterkeyhint="send"><button type="submit" id="send-order" class="send-btn" data-label="send">${icon('arrow')}</button></div></div><p class="composer-note" data-i18n="aiNote"></p></form></section><aside class="cart-panel"><div class="cart-panel-head"><h2 id="cart-heading" tabindex="-1"><span data-i18n="cart"></span><span id="cart-count">0</span></h2><button id="clear-cart" class="small-text-btn" data-i18n="clear"></button></div><div class="cart-lines" id="cart-lines"></div><div class="cart-summary"><div><span data-i18n="total"></span><strong id="cart-total"></strong></div><button id="review-order" class="btn btn-dark full-width" disabled><span data-i18n="review"></span>${icon('arrow')}</button><button id="request-help" class="help-button">${icon('help')}<span data-i18n="help"></span></button></div></aside></div></div></div><span class="device-brand" aria-hidden="true">OPEN KIOSK</span></div></section>`;
+    main.innerHTML = `<section class="kiosk-experience${demoMode ? ' voice-demo-mode' : ''}"><header class="experience-bar"><a class="experience-back" href="/">${icon('arrow')}<span data-i18n="siteBack"></span></a><span class="experience-title" data-i18n="experience"></span><span class="experience-demo" data-i18n="demo"></span><a href="/privacy" target="_blank" rel="noopener" class="experience-data" data-i18n="dataNotice"></a></header>${demoMode ? '<div class="voice-demo-toolbar"><span>합성 음성 시연 · 실제 음성 인식·주문 처리</span><div><button class="btn btn-dark btn-sm" id="demo-run-all">처음부터 연속 시연</button><button class="btn btn-outline btn-sm" id="demo-voice-next">01  글자·그림 키우기</button></div></div>' : ''}<div class="device-shell"><span class="device-camera" aria-hidden="true"></span><div class="device-screen"><div class="kiosk-app"><header class="kiosk-header"><span class="kiosk-store-name">${e(state.store.name)}</span><div class="kiosk-tools"><label class="language-picker"><span class="sr-only" data-i18n="language"></span><select id="language-select">${languages.map((v) => `<option value="${v.id}">${v.label}</option>`).join('')}</select></label><button id="view-settings-toggle" aria-expanded="false" aria-controls="view-settings">${icon('type')}<span data-i18n="view"></span></button><button data-pref="read" aria-pressed="false">${icon('volume')}<span data-i18n="read"></span></button></div></header><section class="kiosk-view-settings" id="view-settings" hidden aria-label="${e(t('view'))}"><div class="view-settings-heading"><strong data-i18n="view"></strong><button class="icon-btn" id="close-settings" data-label="close">${icon('close')}</button></div>${sizeControl('text', .9, 1.6)}${sizeControl('image', .75, 1.5)}<div class="view-settings-bottom"><button id="reset-sizes" data-i18n="reset"></button><button data-pref="contrast" aria-pressed="false" data-i18n="contrast"></button></div></section><div class="kiosk-layout"><section class="kiosk-selection"><h1 class="kiosk-menu-title" data-i18n="menuTitle"></h1><div class="assistant-box" id="assistant-box"><span class="assistant-avatar" aria-hidden="true">✳</span><p id="assistant-message" aria-live="polite" aria-atomic="true"></p><button id="repeat-message" class="icon-btn" data-label="repeat">${icon('volume')}</button></div><div class="category-tabs" role="group" aria-label="${e(t('all'))}"><button class="active" data-category="all" aria-pressed="true" data-i18n="all"></button><button data-category="coffee" aria-pressed="false" data-i18n="coffee"></button><button data-category="tea" aria-pressed="false" data-i18n="tea"></button><button data-category="dessert" aria-pressed="false" data-i18n="dessert"></button><button data-category="brunch" aria-pressed="false" data-i18n="brunch"></button><button id="recommend-menu" class="recommend-trigger" data-i18n="recommend"></button></div><div class="kiosk-menu" id="kiosk-menu"></div><form class="composer" id="composer"><div class="voice-panel" id="voice-panel" data-phase="idle"><button type="button" class="voice-btn" id="voice-order"></button><div class="voice-body"><p id="voice-state" role="status"></p><div class="voice-wave" aria-hidden="true">${Array.from({ length: 16 }, () => '<i></i>').join('')}</div><div class="voice-caption" id="voice-caption" hidden><small data-i18n="heard"></small><p id="voice-heard"></p></div></div><button type="button" class="voice-keyboard-toggle" id="keyboard-toggle" data-label="keyboard" aria-expanded="false" aria-controls="keyboard-entry">${icon('keyboard')}<span data-i18n="keyboard"></span></button></div><div id="keyboard-entry" hidden><div class="composer-input-row"><label class="sr-only" for="order-text" data-i18n="inputLabel"></label><input id="order-text" maxlength="500" autocomplete="off" enterkeyhint="send"><button type="submit" id="send-order" class="send-btn" data-label="send">${icon('arrow')}</button></div></div><p class="composer-note" data-i18n="aiNote"></p></form></section><aside class="cart-panel"><div class="cart-panel-head"><h2 id="cart-heading" tabindex="-1"><span data-i18n="cart"></span><span id="cart-count">0</span></h2><button id="clear-cart" class="small-text-btn" data-i18n="clear"></button></div><div class="cart-lines" id="cart-lines"></div><div class="cart-summary"><div><span data-i18n="total"></span><strong id="cart-total"></strong></div><button id="review-order" class="btn btn-dark full-width" disabled><span data-i18n="review"></span>${icon('arrow')}</button><button id="request-help" class="help-button">${icon('help')}<span data-i18n="help"></span></button></div></aside></div></div></div><span class="device-brand" aria-hidden="true">OPEN KIOSK</span></div></section>`;
     paintLanguage(); preferences(); status(lastReply);
     const toggleSettings = (open) => { $('#view-settings').hidden = !open; $('#view-settings-toggle').setAttribute('aria-expanded', String(open)); };
     $('#view-settings-toggle').onclick = () => toggleSettings($('#view-settings').hidden);
@@ -307,7 +357,7 @@ export async function kioskPage(main) {
       const size = event.target.closest('[data-size]');
       if (size) return applyUI({ [`${size.dataset.size}_delta`]: Number(size.dataset.delta) });
       const cat = event.target.closest('[data-category]');
-      if (cat) { category = cat.dataset.category; $$('[data-category]').forEach((b) => { b.classList.toggle('active', b === cat); b.setAttribute('aria-pressed', String(b === cat)); }); paintMenu(); return; }
+      if (cat) { navigateMenu(cat.dataset.category); return; }
       const product = event.target.closest('[data-product]'); if (product && !busy) return chooseProduct(state.products.find((v) => v.id === product.dataset.product));
       const button = event.target.closest('[data-cart-action]');
       if (button) {
@@ -319,8 +369,9 @@ export async function kioskPage(main) {
     }, { signal: controller.signal });
     main.addEventListener('keydown', (event) => { if (event.key === 'Escape' && !$('#view-settings').hidden) { toggleSettings(false); $('#view-settings-toggle').focus(); } }, { signal: controller.signal });
     window.addEventListener('resize', () => $$('.kiosk-modal').forEach(positionDialog), { signal: controller.signal });
-    if (demoMode) { $('#demo-voice-next').onclick = playDemoVoice; $('#demo-run-all').onclick = runDemoSequence; }
+    if (demoMode) { $('#demo-voice-next').onclick = playDemoVoice; $('#demo-voice-next').textContent = demoSamples[0].label; $('#demo-run-all').hidden = menuDemo; if (!menuDemo) $('#demo-run-all').onclick = runDemoSequence; }
     $('#keyboard-toggle').onclick = () => { const entry = $('#keyboard-entry'); entry.hidden = !entry.hidden; $('#keyboard-toggle').setAttribute('aria-expanded', String(!entry.hidden)); if (!entry.hidden) $('#order-text').focus(); };
+    $('#recommend-menu').onclick = openRecommendationPrompt;
     $('#composer').onsubmit = (event) => { event.preventDefault(); submitText(); };
     $('#voice-order').onclick = voice; $('#repeat-message').onclick = () => speak(lastReply, true); $('#review-order').onclick = reviewOrder;
     $('#clear-cart').onclick = () => { if (!state.cart.length || busy) return; const d = modal(`<div class="modal-heading"><h2>${e(t('clearTitle'))}</h2></div><button class="btn btn-dark full-width" id="clear-confirm">${e(t('clearConfirm'))}</button>`); $('#clear-confirm', d).onclick = () => { d.close(); change({ type: 'clear' }); }; };

@@ -1,13 +1,16 @@
 import { AppError } from './cart.mjs';
-import { isLanguage, productName } from '../public/js/locale.js';
+import { isLanguage, productName, tr } from '../public/js/locale.js';
 import { presentationForRequest } from '../public/js/presentation.js';
+import { isRecommendationRequest, parseMenuNavigation, navigationForRequest } from '../public/js/menu-intent.js';
 
 const nullableString = { type: ['string', 'null'] };
 export const intentSchema = {
   type: 'object', additionalProperties: false,
-  required: ['reply', 'clarification', 'review', 'operations', 'presentation'],
+  required: ['reply', 'clarification', 'review', 'operations', 'presentation', 'navigation', 'recommendations'],
   properties: {
     reply: { type: 'string' }, clarification: { type: 'boolean' }, review: { type: 'boolean' },
+    navigation: { type: ['string', 'null'], enum: ['all', 'coffee', 'tea', 'dessert', 'brunch', null] },
+    recommendations: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['product_ids', 'title', 'reason'], properties: { product_ids: { type: 'array', items: { type: 'string' } }, title: { type: 'string' }, reason: { type: 'string' } } } },
     presentation: {
       type: 'object', additionalProperties: false,
       required: ['language', 'text_delta', 'image_delta', 'text_size', 'image_size', 'reset'],
@@ -58,8 +61,10 @@ export async function interpret({ key, model, text, cart, products, language = '
 한 번에 한 질문만 한다. 없는 메뉴나 모호한 요청에는 clarification=true, operations=[]로 확인한다.
 현재 장바구니가 비어 있지 않은데 '하나만 차갑게/따뜻하게'라고 하면 기존 line_id의 split_temperature로 해당 quantity만 변경한다. '아이스 두 잔' 뒤 '하나만 따뜻한 걸로'는 총 두 잔을 유지하고 온도만 나눈다.
 추가 옵션은 메뉴에 등록된 것만 허용한다. 헤이즐넛 시럽은 hazelnut이며 잔당 500원이다. '차가운 거에 시럽 추가'는 iced 줄의 line_id만 addons 연산으로 바꾼다. addons 배열은 변경 후 전체 옵션이며 제거는 []이다. 일부 잔에만 옵션을 추가하면 quantity로 해당 잔 수를 지정한다. 온도 변경 시 기존 옵션은 유지한다. 새 메뉴에 시럽을 요청하면 add의 addons에 포함한다.
-'두 잔 말고 한 잔'은 quantity 변경이다. remove는 지정 줄을 삭제한다. 새 메뉴는 add. 온도 미지정 시 확인 질문한다.
+'두 잔 말고 한 잔'은 quantity 변경이다. remove는 지정 줄을 삭제한다. 새 메뉴는 add. 음료의 온도 미지정 시 확인 질문한다. 음식은 temperatures=[]이며 temperature=null로 담고 온도를 묻지 않는다. 음식은 개, 음료는 잔으로 센다.
 메뉴 질문은 operations=[]로 답한다. 기존 줄이 여러 개라 '그거'가 모호하면 어떤 메뉴인지 묻는다.
+메뉴 탐색은 navigation으로 표현한다. '배고파/출출해/식사'는 brunch, '달달한 거 먹고 싶어/디저트'는 dessert, '커피 메뉴'는 coffee, '차·음료 메뉴'는 tea, '전체 메뉴'는 all. 탐색만 요청하면 operations=[]이며 주문을 담지 않는다.
+추천 요청은 실제 판매 중인 메뉴 ID로 1~2개 조합을 recommendations에 넣는다. 각 조합은 1~3개의 서로 다른 product_ids와 짧은 title, 60자 정도의 reason이다. 예산은 원화 기본 메뉴 가격 합계로 지키고 요청한 단맛·식사 조건과 메뉴 설명·tags를 참고한다. 커피와 식사를 함께 원하면 한 조합에 커피와 brunch 메뉴를 하나씩 넣는다. 추천만 요청하면 operations=[], review=false이며 사용자가 조합과 음료 온도를 직접 선택하게 한다. 알레르기·질병 안전성을 추측하는 추천은 하지 말고 직원 확인을 안내한다. 추천 요청이 아니면 recommendations=[]. 이동이 필요 없으면 navigation=null.
 글자·사진 크기 변경이나 언어 변경 요청은 presentation으로 표현한다. 화면 크기를 바꾸어도 주문은 유지한다. 주문만 바꾸는 요청은 presentation의 size와 language를 모두 null, delta=0, reset=false로 유지한다. 기본값 1을 넣어 화면을 초기화하지 않는다.
 text_delta/image_delta는 확대 1, 축소 -1, 변경 없음 0. 글씨만 요청하면 사진은 바꾸지 않는다. '좀 크게 보여줘'는 둘 다 확대한다.
 기본 크기는 reset=true. 절대 크기 요청일 때 text_size는 0.9~1.6, image_size는 0.75~1.5 범위. 그 외에는 null.
@@ -68,9 +73,9 @@ text_delta/image_delta는 확대 1, 축소 -1, 변경 없음 0. 글씨만 요청
 주문 확정·결제·완료 요청은 review=true로 확인 화면만 열도록 한다. 실제 확정·결제 권한은 없다.
 필요없는 nullable 필드는 null로 채운다. reply는 최대 100자 정도로 간결하게. 사용자에게 내부 ID나 구현 상세를 말하지 않는다.`;
   const result = await provider('responses', key, {
-    model, store: false, max_output_tokens: 1000,
+    model, store: false, max_output_tokens: 1400,
     instructions,
-    input: JSON.stringify({ language, menu: products.map((p) => ({ id: p.id, name: productName(p, language), canonical_name: p.name, price: p.price, temperatures: p.temperatures, addons: p.addons, available: p.available })), cart, request: text }),
+    input: JSON.stringify({ language, menu: products.map((p) => ({ id: p.id, name: productName(p, language), canonical_name: p.name, category: p.category, description: p.description, tags: p.tags, unit: p.unit, price: p.price, temperatures: p.temperatures, addons: p.addons, available: p.available })), cart, request: text }),
     text: { format: { type: 'json_schema', name: 'kiosk_order_intent', strict: true, schema: intentSchema } },
   });
   const output = (result.output || []).flatMap((o) => o.content || []).filter((c) => c.type === 'output_text').map((c) => c.text).join('');
@@ -79,8 +84,11 @@ text_delta/image_delta는 확대 1, 축소 -1, 변경 없음 0. 글씨만 요청
   try { intent = JSON.parse(output); } catch { throw new AppError(503, '주문 내용을 확인하지 못했어요. 화면에서 선택해 주세요.', 'ai_invalid'); }
   if (!intent || typeof intent.reply !== 'string' || typeof intent.review !== 'boolean' || typeof intent.clarification !== 'boolean' || !Array.isArray(intent.operations) || intent.operations.length > 8) throw new AppError(503, '주문 내용을 다시 확인해 주세요.', 'ai_invalid');
   if (intent.clarification) intent.operations = [];
+  const recommendationRequested = isRecommendationRequest(text);
+  if (recommendationRequested || parseMenuNavigation(text)) { intent.operations = []; intent.review = false; }
+  if (/알레르|알러지|allerg|アレルギ|过敏|당뇨|diabet/i.test(text)) { intent.operations = []; intent.review = false; intent.recommendations = []; intent.reply = tr(language, 'staffCheck'); }
   intent.reply = intent.reply.slice(0, 400);
-  return { ...intent, presentation: presentationForRequest(text, intent.presentation), usage: result.usage?.total_tokens || 0 };
+  return { ...intent, recommendations: recommendationRequested ? intent.recommendations : [], navigation: navigationForRequest(text, intent.navigation), presentation: presentationForRequest(text, intent.presentation), usage: result.usage?.total_tokens || 0 };
 }
 
 export async function transcribe({ key, model, bytes, type, language = 'ko' }) {
@@ -91,7 +99,7 @@ export async function transcribe({ key, model, bytes, type, language = 'ko' }) {
   form.set('file', new Blob([bytes], { type: base }), `order.${extensions[base]}`);
   form.set('model', model);
   if (!isLanguage(language)) language = 'ko';
-  form.set('prompt', `Cafe menu: ${['americano', 'latte', 'vanilla', 'decaf', 'matcha', 'chocolate', 'peach', 'lemon'].map((id) => productName(id, language)).join(', ')}. 헤이즐넛 시럽, hazelnut syrup. 화면 크게, 글씨 크게.`);
+  form.set('prompt', `Cafe menu: ${['americano', 'latte', 'vanilla', 'decaf', 'matcha', 'chocolate', 'peach', 'lemon', 'scone', 'brownie', 'cheesecake', 'sandwich', 'toast', 'yogurt'].map((id) => productName(id, language)).join(', ')}. 헤이즐넛 시럽, hazelnut syrup. 브런치, 디저트, 배고픈데, 달달한 거, 추천. 화면 크게, 글씨 크게.`);
   const result = await provider('audio/transcriptions', key, form, false);
   if (typeof result.text !== 'string' || !result.text.trim()) throw new AppError(422, '말소리를 찾지 못했어요. 다시 녹음하거나 글자로 입력해 주세요.');
   return result.text.trim().slice(0, 500);

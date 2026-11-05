@@ -2,7 +2,7 @@ export const $ = (selector, scope = document) => scope.querySelector(selector);
 export const $$ = (selector, scope = document) => [...scope.querySelectorAll(selector)];
 export const e = (s = '') => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 export const won = (v) => new Intl.NumberFormat('ko-KR').format(v);
-export const temp = (v) => v === 'hot' ? '따뜻하게' : '차갑게';
+export const temp = (v) => v === 'hot' ? '따뜻하게' : v === 'iced' ? '차갑게' : '';
 const paths = {
   arrow: '<path d="M5 12h14m-6-6 6 6-6 6"/>',
   diagonal: '<path d="M6 18 18 6M6 6h12v12"/>',
@@ -31,9 +31,21 @@ const paths = {
 export function icon(name, cls = '') { return `<svg class="icon ${e(cls)}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[name] || paths.arrow}</svg>`; }
 export function logo(light = false) { return `<a class="brand ${light ? 'brand-light' : ''}" href="/" aria-label="Open Kiosk 홈"><span class="brand-mark" aria-hidden="true"><i></i><b></b><i></i></span><span>open<span class="brand-weight">kiosk</span><sup aria-hidden="true">✳</sup></span></a>`; }
 export function drinkArt(p, cls = '') {
+  if (['dessert', 'brunch'].includes(p.category) || ['scone', 'brownie', 'cake', 'sandwich', 'toast', 'yogurt'].includes(p.art)) return foodArt(p, cls);
   const fills = { coffee: '#4c2b20', latte: '#c89667', matcha: '#91a568', chocolate: '#785140', tea: '#d88f47', lemon: '#dbce6c' };
   const fill = fills[p.art] || fills.coffee;
   return `<svg class="drink-art ${e(cls)}" viewBox="0 0 200 180" role="img" aria-label="${e(p.name || '커피')} 일러스트"><ellipse cx="103" cy="158" rx="54" ry="9" fill="#202722" opacity=".07"/><path d="M59 52h85l-9 91c-1 11-64 11-65 0Z" fill="#fff" opacity=".9"/><path d="M65 63h73l-8 76c-1 8-54 8-55 0Z" fill="${fill}"/><path d="M65 63h73l-2 15c-21 9-48 7-69 0Z" fill="#f4e9d7" opacity="${p.art === 'coffee' ? '.22' : '.8'}"/><ellipse cx="101" cy="51" rx="43" ry="9" fill="#faf7f0"/><ellipse cx="101" cy="51" rx="34" ry="5" fill="${fill}"/><path d="M143 69h7c27 0 23 38-10 36" stroke="#fff" stroke-width="9" fill="none"/><path d="M84 33c-9-10 9-12 0-23m20 23c-9-10 9-12 0-23m20 23c-9-10 9-12 0-23" stroke="#7a8173" opacity=".3" stroke-width="3" stroke-linecap="round" fill="none"/><path d="M78 88h46v28H78Z" fill="#fff" opacity=".86"/><path d="M94 96h-5v12h5m13-12h5v12h-5" stroke="#586b38" stroke-width="2.8" fill="none"/></svg>`;
+}
+function foodArt(p, cls) {
+  const drawings = {
+    scone: '<path d="M49 121 68 65l37-13 34 18 18 50-25 18H77Z" fill="#b67a3c"/><path d="m52 108 22-42 31-10 29 16 18 38-23 12-55-2Z" fill="#e3b778"/><path d="m78 81 8-8m20 4 13 6m-26 20 13-7m25 9 8-7" stroke="#f8dc9c" stroke-width="6" stroke-linecap="round"/>',
+    brownie: '<path d="m48 88 66-26 41 27-5 44-65 24-38-26Z" fill="#5c3023"/><path d="m48 88 66-26 41 27-68 27Z" fill="#81503a"/><path d="m61 89 9-5m30-8 9-4m10 22 10-4m-37 13 8-4" stroke="#b9825d" stroke-width="5" stroke-linecap="round"/><path d="m84 117 1 39" stroke="#a36a49" stroke-width="3"/>',
+    cake: '<path d="m49 129 7-52 89 18 9 39-57 18Z" fill="#bd824e"/><path d="m54 120 3-40 83 17 10 29-54 16Z" fill="#fae6b5"/><path d="m56 77 59-30 30 48-48 27Z" fill="#fff0d4"/><path d="m58 78 57-28 27 43-45 25Z" fill="#f8edd6"/><path d="m105 51 7-17 14 3 6 15-17 15Z" fill="#c94f4a"/><path d="m111 35 1-8m0 8 10-8m-10 8-8-8" stroke="#719151" stroke-width="4"/>',
+    sandwich: '<path d="m39 116 65-72 59 76-31 29-64-5Z" fill="#a86e38"/><path d="m42 108 63-67 57 70-28 26-65-4Z" fill="#f5db9d"/><path d="m46 114 18-10 14 5 13-12 17 11 14-4 17 11 18-2-25 22-62-1Z" fill="#719e55"/><path d="m51 119 23-8 59 7 18-1-21 19-57-2Z" fill="#e5a595"/><path d="m55 123 37-8 50 7-16 18-53-4Z" fill="#eecf62"/><path d="m45 129 59-62 51 63-25 20-57-3Z" fill="#f8e6b8"/><path d="m67 125 38-40 31 40" stroke="#d7ae6a" stroke-width="5" fill="none"/>',
+    toast: '<path d="M55 135V78c-18-24 3-39 22-34 15-9 39-6 51 2 24-3 39 16 18 33v56Z" fill="#ae773c"/><path d="M63 128V77c-14-18 2-27 16-24 13-7 31-5 45 3 18-3 29 9 14 23v49Z" fill="#ecd49a"/><path d="M69 105c-13-13-1-27 15-26 0-19 25-24 36-9 20-3 30 14 20 25 7 15-13 27-24 20-11 13-31 7-32-4Z" fill="#fff9de"/><circle cx="106" cy="92" r="19" fill="#efbd42"/><path d="m76 123 9-4m41 3 9-4" stroke="#729656" stroke-width="5"/>',
+    yogurt: '<path d="M45 82c4 62 108 64 113 0Z" fill="#f9fbf2"/><ellipse cx="101" cy="82" rx="57" ry="25" fill="#d2d9ce"/><ellipse cx="101" cy="79" rx="49" ry="20" fill="#fff8eb"/><path d="m61 77 12-13 14 8-3 11-16 2Z" fill="#cc5a50"/><path d="m107 65 12-8 13 10-8 11Z" fill="#c6544f"/><circle cx="137" cy="82" r="8" fill="#69719b"/><circle cx="95" cy="82" r="7" fill="#626b95"/><path d="m80 93 12-5m11 10 10-7m-4-21 8 5m11 17 8-4" stroke="#c59758" stroke-width="6" stroke-linecap="round"/>',
+  };
+  return `<svg class="drink-art food-art ${e(cls)}" viewBox="0 0 200 180" role="img" aria-label="${e(p.name)} 일러스트"><ellipse cx="101" cy="145" rx="69" ry="20" fill="#fff" opacity=".75"/><ellipse cx="101" cy="148" rx="54" ry="10" fill="#667253" opacity=".09"/>${drawings[p.art] || drawings.scone}</svg>`;
 }
 export async function api(path, options = {}) {
   const headers = { ...(options.body instanceof Blob ? {} : { 'Content-Type': 'application/json' }), 'X-Open-Kiosk': '1', ...options.headers };

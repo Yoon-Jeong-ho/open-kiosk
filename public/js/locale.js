@@ -14,6 +14,20 @@ const messages = {
   view: ['글자·사진', 'Text & images', '文字・写真', '文字与图片'],
   read: ['읽어주기', 'Read aloud', '読み上げ', '朗读'],
   all: ['전체', 'All', 'すべて', '全部'], coffee: ['커피', 'Coffee', 'コーヒー', '咖啡'], tea: ['차·음료', 'Tea & more', 'お茶・その他', '茶与其他'],
+  dessert: ['디저트', 'Dessert', 'デザート', '甜点'], brunch: ['브런치', 'Brunch', 'ブランチ', '早午餐'],
+  menuMoved: ['{category} 메뉴를 보여드릴게요.', 'Here is the {category} menu.', '{category}メニューを表示します。', '为您显示{category}菜单。'],
+  recommend: ['메뉴 추천', 'Recommend', 'おすすめ', '菜单推荐'], recommendTitle: ['어떤 메뉴를 찾으세요?', 'What are you in the mood for?', 'どんなメニューをお探しですか？', '您想吃点什么？'],
+  recommendMeal: ['든든한 브런치', 'A filling brunch', '食事のブランチ', '来一份早午餐'], recommendSweet: ['커피와 디저트', 'Coffee & dessert', 'コーヒーとデザート', '咖啡和甜点'], recommendBudget: ['만 원 안에서', 'Within ₩10,000', '1万ウォン以内', '一万韩元以内'],
+  promptMeal: ['배고파요. 브런치 메뉴를 추천해 주세요.', 'I am hungry. Recommend a brunch.', 'お腹が空きました。ブランチをおすすめしてください。', '我饿了，请推荐早午餐。'],
+  promptSweet: ['커피와 달달한 디저트 조합을 추천해 주세요.', 'Recommend coffee and a sweet dessert.', 'コーヒーと甘いデザートの組み合わせをおすすめしてください。', '请推荐咖啡和甜点的组合。'],
+  promptBudget: ['달지 않은 커피와 브런치를 1만원 안에서 추천해 주세요.', 'Recommend a coffee that is not sweet and a brunch within 10,000 won.', '甘くないコーヒーとブランチを10000ウォン以内でおすすめしてください。', '请推荐不甜的咖啡和早午餐，总价不超过10000韩元。'],
+  recommendInput: ['원하는 메뉴와 예산', 'Preferences and budget', '好みと予算', '偏好与预算'], recommendPlaceholder: ['예: 커피와 식사를 만 원 안에서', 'E.g. coffee and brunch under ₩10,000', '例：コーヒーと食事を1万ウォン以内', '例如：咖啡加早午餐，不超过一万韩元'],
+  recommendSubmit: ['추천 보기', 'Show suggestions', 'おすすめを見る', '查看推荐'], recommendResults: ['이런 메뉴 어때요?', 'How about these?', 'こちらはいかがですか？', '看看这些菜单吧'],
+  recommendBasis: ['기본 메뉴 가격 기준이에요.', 'Based on base menu prices.', '基本メニュー価格でのおすすめです。', '以菜单基础价格为准。'],
+  chooseCombo: ['이 조합 고르기', 'Choose this set', 'この組み合わせを選ぶ', '选择这个组合'], addCombo: ['이 조합 담기 · {price}', 'Add this set · {price}', 'この組み合わせを追加 · {price}', '添加此组合 · {price}'],
+  comboOptions: ['담기 전에 확인해 주세요', 'Check before adding', '追加前にご確認ください', '添加前请确认'],
+  noRecommendations: ['조건에 맞는 추천을 찾지 못했어요. 예산이나 메뉴를 바꿔 말씀해 주세요.', 'No matching suggestions. Try another budget or preference.', '条件に合うおすすめが見つかりません。予算や好みを変えてください。', '没有符合条件的推荐，请调整预算或偏好。'],
+  staffCheck: ['알레르기나 건강 조건에 맞는 메뉴는 보장할 수 없어요. 주문 전에 매장 직원에게 확인해 주세요.', 'Please check allergies or health-related requirements with staff before ordering. We cannot guarantee suitability.', 'アレルギーや健康上の条件は保証できません。注文前にスタッフへご確認ください。', '无法保证菜单符合过敏或健康要求，下单前请向店员确认。'],
   textSize: ['글자 크기', 'Text size', '文字サイズ', '文字大小'], imageSize: ['사진 크기', 'Image size', '写真サイズ', '图片大小'],
   smaller: ['작게', 'Smaller', '小さく', '缩小'], larger: ['크게', 'Larger', '大きく', '放大'],
   reset: ['기본 크기로', 'Reset sizes', '標準サイズ', '恢复默认大小'], contrast: ['고대비', 'High contrast', '高コントラスト', '高对比度'],
@@ -24,7 +38,7 @@ const messages = {
   less: ['수량 줄이기', 'Decrease quantity', '数量を減らす', '减少数量'], more: ['수량 늘리기', 'Increase quantity', '数量を増やす', '增加数量'],
   quantity: ['수량', 'Quantity', '数量', '数量'], chooseTemp: ['온도를 골라 주세요', 'Choose a temperature', '温度をお選びください', '请选择温度'],
   addons: ['추가 옵션', 'Add-ons', '追加オプション', '附加选项'], editAddons: ['옵션 변경', 'Edit add-ons', 'オプション変更', '更改选项'], saveAddons: ['옵션 적용', 'Apply add-ons', 'オプションを適用', '应用选项'], hazelnut: ['헤이즐넛 시럽', 'Hazelnut syrup', 'ヘーゼルナッツシロップ', '榛果糖浆'], perCup: ['잔당', 'per drink', '1杯あたり', '每杯'],
-  add: ['{count}잔 담기 · {price}', 'Add {count} · {price}', '{count}杯追加 · {price}', '添加{count}杯 · {price}'],
+  add: ['{quantity} 담기 · {price}', 'Add {quantity} · {price}', '{quantity}追加 · {price}', '添加{quantity} · {price}'],
   review: ['주문 확인', 'Review order', '注文を確認', '确认订单'], help: ['도움 요청', 'Get help', 'サポート', '寻求帮助'],
   confirmTitle: ['이대로 주문할까요?', 'Ready to order?', 'この内容で注文しますか？', '确认下单吗？'],
   confirm: ['주문 확정', 'Place order', '注文する', '确认下单'], back: ['수정하기', 'Edit order', '修正する', '修改订单'],
@@ -78,9 +92,21 @@ const labels = {
   chocolate: ['초콜릿', 'Chocolate', 'チョコレート', '巧克力饮品'],
   peach: ['복숭아 아이스티', 'Peach iced tea', 'ピーチアイスティー', '桃子冰茶'],
   lemon: ['레몬에이드', 'Lemon ade', 'レモネード', '柠檬气泡饮'],
+  scone: ['버터 스콘', 'Butter scone', 'バタースコーン', '黄油司康'],
+  brownie: ['초콜릿 브라우니', 'Chocolate brownie', 'チョコブラウニー', '巧克力布朗尼'],
+  cheesecake: ['딸기 치즈케이크', 'Strawberry cheesecake', 'いちごチーズケーキ', '草莓芝士蛋糕'],
+  sandwich: ['햄치즈 샌드위치', 'Ham & cheese sandwich', 'ハムチーズサンド', '火腿芝士三明治'],
+  toast: ['에그 토스트', 'Egg toast', 'エッグトースト', '鸡蛋吐司'],
+  yogurt: ['과일 요거트볼', 'Fruit yogurt bowl', 'フルーツヨーグルト', '水果酸奶碗'],
 };
 export const isLanguage = (value) => languages.some((l) => l.id === value);
 export const addonName = (id, language = 'ko') => tr(language, id);
+export function quantityText(count, product, language = 'ko') {
+  const id = typeof product === 'string' ? product : product?.product_id || product?.id;
+  const food = product?.unit === 'item' || ['scone', 'brownie', 'cheesecake', 'sandwich', 'toast', 'yogurt'].includes(id);
+  if (language === 'en') return `${count} ${food ? count === 1 ? 'item' : 'items' : count === 1 ? 'drink' : 'drinks'}`;
+  return `${count}${language === 'ja' ? food ? '個' : '杯' : language === 'zh' ? food ? '份' : '杯' : food ? '개' : '잔'}`;
+}
 export function tr(language, key, values = {}) {
   const index = Math.max(0, languages.findIndex((l) => l.id === language));
   return (messages[key]?.[index] || messages[key]?.[0] || key).replace(/\{(\w+)\}/g, (_, name) => String(values[name] ?? ''));

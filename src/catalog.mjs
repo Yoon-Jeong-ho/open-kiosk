@@ -18,7 +18,13 @@ export const catalog = [
   { id: 'chocolate', name: '초콜릿', en: 'Chocolate', category: 'tea', price: 4500, temperatures: ['hot', 'iced'], description: '진한 코코아의 달콤한 한 잔', art: 'chocolate', color: '#e4d0c7' },
   { id: 'peach', name: '복숭아 아이스티', en: 'Peach iced tea', category: 'tea', price: 3800, temperatures: ['iced'], description: '산뜻한 복숭아 향의 차가운 차', art: 'tea', color: '#f0d6c7' },
   { id: 'lemon', name: '레몬에이드', en: 'Lemon ade', category: 'tea', price: 4500, temperatures: ['iced'], description: '레몬과 탄산수의 상큼한 만남', art: 'lemon', color: '#f2eac0' },
-].map((p) => ({ ...p, addons: p.category === 'coffee' ? [{ id: 'hazelnut', name: '헤이즐넛 시럽', price: 500 }] : [] }));
+  { id: 'scone', name: '버터 스콘', en: 'Butter scone', category: 'dessert', price: 3500, temperatures: [], description: '버터 풍미의 스콘 한 개', art: 'scone', color: '#efe0bd', tags: ['bakery', 'mild'] },
+  { id: 'brownie', name: '초콜릿 브라우니', en: 'Chocolate brownie', category: 'dessert', price: 4200, temperatures: [], description: '진한 초콜릿 브라우니 한 조각', art: 'brownie', color: '#e8d1c4', tags: ['chocolate', 'sweet'] },
+  { id: 'cheesecake', name: '딸기 치즈케이크', en: 'Strawberry cheesecake', category: 'dessert', price: 5500, temperatures: [], description: '딸기를 올린 치즈케이크 한 조각', art: 'cake', color: '#efd6d9', tags: ['cake', 'sweet'] },
+  { id: 'sandwich', name: '햄치즈 샌드위치', en: 'Ham & cheese sandwich', category: 'brunch', price: 6500, temperatures: [], description: '햄과 치즈, 채소를 넣은 샌드위치', art: 'sandwich', color: '#dfebd3', tags: ['meal', 'savory'] },
+  { id: 'toast', name: '에그 토스트', en: 'Egg toast', category: 'brunch', price: 6000, temperatures: [], description: '달걀과 채소를 곁들인 토스트', art: 'toast', color: '#f1e5c7', tags: ['meal', 'savory'] },
+  { id: 'yogurt', name: '과일 요거트볼', en: 'Fruit yogurt bowl', category: 'brunch', price: 6800, temperatures: [], description: '과일과 그래놀라를 곁들인 요거트볼', art: 'yogurt', color: '#deddeb', tags: ['meal', 'fruit', 'mild'] },
+].map((p) => ({ ...p, unit: p.temperatures.length ? 'cup' : 'item', tags: p.tags || (['americano', 'decaf'].includes(p.id) ? ['coffee', 'not_sweet'] : p.id === 'latte' ? ['coffee', 'mild'] : ['sweet']), addons: p.category === 'coffee' ? [{ id: 'hazelnut', name: '헤이즐넛 시럽', price: 500 }] : [] }));
 
-export const temperatureName = (value) => value === 'hot' ? '따뜻하게' : '차갑게';
+export const temperatureName = (value) => value === 'hot' ? '따뜻하게' : value === 'iced' ? '차갑게' : '';
 export const money = (value) => new Intl.NumberFormat('ko-KR').format(value);

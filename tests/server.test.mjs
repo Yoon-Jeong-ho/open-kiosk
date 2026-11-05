@@ -140,6 +140,23 @@ test('demo video supports playback, byte ranges, seeking and captions without ex
     const sample = await fetch(base + `/media/voice-sample-0${i}.mp3`);
     assert.equal(sample.status, 200); assert.equal(sample.headers.get('content-type'), 'audio/mpeg'); assert.ok((await sample.arrayBuffer()).byteLength > 1000);
   }
+  for (let i = 1; i <= 3; i++) {
+    const sample = await fetch(base + `/media/menu-sample-0${i}.mp3`);
+    assert.equal(sample.status, 200); assert.equal(sample.headers.get('content-type'), 'audio/mpeg'); assert.ok((await sample.arrayBuffer()).byteLength > 1000);
+  }
+  assert.equal((await fetch(base + '/media/menu-sample-04.mp3')).status, 404);
   assert.equal((await fetch(base + '/media/voice-sample-05.mp3')).status, 404);
   assert.equal((await fetch(base + '/media/transcripts.json')).status, 404);
+});
+
+test('a selected coffee and brunch set is added atomically at server prices and appears in the merchant order', async () => {
+  const owner=client(), customer=client(); const store=await signup(owner); let state=await bootstrap(customer,store.store_id);
+  const operations=[{type:'add',product_id:'americano',temperature:'iced',quantity:1,price:1},{type:'add',product_id:'sandwich',temperature:null,quantity:1,price:1}];
+  const added=await customer('/api/kiosk/action','POST',{revision:state.revision,operations});
+  assert.equal(added.status,200); state=added.data; assert.equal(state.total,10000); assert.equal(state.count,2);
+  assert.equal(state.cart.find((l)=>l.product_id==='sandwich').temperature,null);
+  const bad=await customer('/api/kiosk/action','POST',{revision:state.revision,operations:[{type:'add',product_id:'scone',quantity:1},{type:'add',product_id:'unknown',quantity:1}]});
+  assert.equal(bad.status,400); assert.deepEqual((await customer('/api/kiosk/state')).data.cart,state.cart);
+  assert.equal((await customer('/api/kiosk/confirm','POST',{revision:state.revision,total:10000,confirmed:true})).status,201);
+  const order=(await owner('/api/merchant/dashboard')).data.orders[0]; assert.equal(order.total,10000); assert.equal(order.lines.find((l)=>l.product_id==='sandwich').unit,'item');
 });

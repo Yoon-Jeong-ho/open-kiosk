@@ -9,6 +9,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { catalog, plans, presets } from './catalog.mjs';
 import { AppError, applyOperations, pricedCart } from './cart.mjs';
 import { interpret, transcribe } from './ai.mjs';
+import { validateRecommendations } from './recommendations.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const env = { ...(existsSync(join(root, '.env')) ? parseEnv(readFileSync(join(root, '.env'), 'utf8')) : {}), ...process.env };
@@ -235,7 +236,7 @@ async function handle(req, res) {
       if (method === 'GET' && path === '/api/kiosk/state') return json(res, 200, state(kiosk(req)));
       if (method === 'POST' && path === '/api/kiosk/action') {
         const row = kiosk(req); const body = await readBody(req); checkRevision(row, body.revision);
-        const next = applyOperations(JSON.parse(row.cart), [body.operation], productsFor(row.store_id));
+        const next = applyOperations(JSON.parse(row.cart), body.operations ?? [body.operation], productsFor(row.store_id));
         const updated = updateCart(row, next, body.revision);
         return json(res, 200, { ...state(updated), reply: next.length ? '주문 내용을 바꿨어요. 아래에서 확인해 주세요.' : '장바구니가 비었어요. 원하는 메뉴를 골라 주세요.' });
       }
@@ -245,10 +246,12 @@ async function handle(req, res) {
         reserveAI(req, row);
         const result = await interpret({ key, model: aiModel, text: body.text, cart: JSON.parse(row.cart), products: productsFor(row.store_id), language: body.language });
         const fresh = kiosk(req); checkRevision(fresh, body.revision);
-        const next = applyOperations(JSON.parse(fresh.cart), result.operations, productsFor(fresh.store_id));
+        const products = productsFor(fresh.store_id);
+        const recommendations = validateRecommendations(result.recommendations, products, { text: body.text, language: body.language });
+        const next = applyOperations(JSON.parse(fresh.cart), result.operations, products);
         const updated = result.operations.length ? updateCart(fresh, next, body.revision) : fresh;
         db.prepare('UPDATE usage SET tokens=tokens+? WHERE day=?').run(result.usage, day());
-        return json(res, 200, { ...state(updated), reply: result.reply, presentation: result.presentation, review: result.review && next.length > 0, changed: result.operations.length > 0, source: 'openai' });
+        return json(res, 200, { ...state(updated), reply: result.reply, navigation: result.navigation, recommendations, presentation: result.presentation, review: result.review && next.length > 0, changed: result.operations.length > 0, source: 'openai' });
       }
       if (method === 'POST' && path === '/api/kiosk/transcribe') {
         const row = kiosk(req);
@@ -288,7 +291,7 @@ async function handle(req, res) {
     if (!['GET', 'HEAD'].includes(method)) throw new AppError(405, '지원하지 않는 요청이에요.');
     const pages = ['/', '/pricing', '/signup', '/checkout', '/dashboard', '/kiosk', '/tour', '/privacy', '/accessibility'];
     let relative = pages.includes(path) ? 'index.html' : decodeURIComponent(path).replace(/^\//, '');
-    if (!/^(index\.html|favicon\.svg|style\.css|kiosk\.css|js\/[a-z-]+\.js|media\/voice-order-demo\.(mp4|jpg|vtt)|media\/voice-sample-0[1-4]\.mp3)$/.test(relative)) throw new AppError(404, '페이지를 찾지 못했어요.');
+    if (!/^(index\.html|favicon\.svg|style\.css|kiosk\.css|js\/[a-z-]+\.js|media\/voice-order-demo\.(mp4|jpg|vtt)|media\/voice-sample-0[1-4]\.mp3|media\/menu-sample-0[1-3]\.mp3)$/.test(relative)) throw new AppError(404, '페이지를 찾지 못했어요.');
     const file = join(publicDir, relative);
     if (relative === 'media/voice-order-demo.mp4') {
       const { size } = await stat(file); let start = 0, end = size - 1;
