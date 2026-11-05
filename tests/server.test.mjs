@@ -136,5 +136,10 @@ test('demo video supports playback, byte ranges, seeking and captions without ex
   for (const range of [`bytes=${size}-`, 'bytes=32-10', 'bytes=-0', 'bytes=0-1,4-5']) assert.equal((await fetch(path, { headers: { Range: range } })).status, 416);
   assert.match(await (await fetch(base + '/media/voice-order-demo.vtt')).text(), /^WEBVTT/);
   assert.equal((await fetch(base + '/media/voice-order-demo.jpg')).headers.get('content-type'), 'image/jpeg');
+  for (let i = 1; i <= 4; i++) {
+    const sample = await fetch(base + `/media/voice-sample-0${i}.mp3`);
+    assert.equal(sample.status, 200); assert.equal(sample.headers.get('content-type'), 'audio/mpeg'); assert.ok((await sample.arrayBuffer()).byteLength > 1000);
+  }
+  assert.equal((await fetch(base + '/media/voice-sample-05.mp3')).status, 404);
   assert.equal((await fetch(base + '/media/transcripts.json')).status, 404);
 });

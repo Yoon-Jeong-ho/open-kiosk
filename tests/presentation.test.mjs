@@ -42,3 +42,11 @@ test('all supported locales have menu names and essential ordering labels', () =
   for (const { id } of languages) for (const key of ['review', 'confirm', 'language', 'chooseTemp', 'textSize', 'imageSize', 'audioNotice', 'help']) assert.notEqual(tr(id, key), key);
   for (const { id } of languages) assert.ok(productName('americano', id).length > 2);
 });
+
+test('a complaint about tiny text selects readable text without shrinking an already larger view', () => {
+  const text = '글씨가 왜 이리 작아, 글씨 좀 키워줘!';
+  const next = applyPresentation(normalizePreferences(), parsePresentationCommand(text));
+  assert.equal(next.textScale, 1.4); assert.equal(next.imageScale, 1);
+  const large = normalizePreferences({ textScale: 1.6 });
+  assert.equal(applyPresentation(large, parsePresentationCommand(text, large)).textScale, 1.6);
+});

@@ -32,7 +32,7 @@ export function applyPresentation(current, change) {
 }
 
 // Only handle unambiguous display-only requests locally. Mixed orders go to the model.
-export function parsePresentationCommand(input) {
+export function parsePresentationCommand(input, current = defaultPreferences) {
   const text = String(input).trim().toLowerCase();
   if (!text || /(?:[0-9一二三四五六七八九十한두세네])\s*(?:잔|컵|杯)|\b(?:add|order|cups?|hot|iced)\b|주문해|추가해|따뜻|차갑|注文して|点一/.test(text)) return null;
   if (/시럽|헤이즐넛|syrup|シロップ|ヘーゼル|糖浆|아메리카노|라[테떼]|말차|초콜릿|아이스티|레몬에이드|americano|latte|coffee|matcha|chocolate|lemonade|アメリカーノ|コーヒー|ラテ|チョコ|ティー|美式|拿铁|咖啡|抹茶|巧克力|冰茶|柠檬/.test(text)) return null;
@@ -58,11 +58,12 @@ export function parsePresentationCommand(input) {
   const both = !textTarget && !imageTarget;
   const maximum = bigger && /최대|아주|가장|largest|maximum|最大/.test(text);
   const minimum = smaller && /최소|가장|smallest|minimum|最小/.test(text);
+  const readable = bigger && textTarget && /작아|작네|너무\s*작|too\s*small|文字.*小さ|字.*太小/.test(text);
   return sanitizePresentation({
     language, reset,
-    text_delta: (textTarget || both) && !maximum && !minimum ? direction : 0,
+    text_delta: (textTarget || both) && !maximum && !minimum && !readable ? direction : 0,
     image_delta: (imageTarget || both) && !maximum && !minimum ? direction : 0,
-    text_size: (textTarget || both) && (maximum || minimum) ? maximum ? 1.6 : .9 : null,
+    text_size: readable ? Math.max(normalizePreferences(current).textScale, 1.4) : (textTarget || both) && (maximum || minimum) ? maximum ? 1.6 : .9 : null,
     image_size: (imageTarget || both) && (maximum || minimum) ? maximum ? 1.5 : .75 : null,
   });
 }

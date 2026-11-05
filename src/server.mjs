@@ -288,7 +288,7 @@ async function handle(req, res) {
     if (!['GET', 'HEAD'].includes(method)) throw new AppError(405, '지원하지 않는 요청이에요.');
     const pages = ['/', '/pricing', '/signup', '/checkout', '/dashboard', '/kiosk', '/tour', '/privacy', '/accessibility'];
     let relative = pages.includes(path) ? 'index.html' : decodeURIComponent(path).replace(/^\//, '');
-    if (!/^(index\.html|favicon\.svg|style\.css|kiosk\.css|js\/[a-z-]+\.js|media\/voice-order-demo\.(mp4|jpg|vtt))$/.test(relative)) throw new AppError(404, '페이지를 찾지 못했어요.');
+    if (!/^(index\.html|favicon\.svg|style\.css|kiosk\.css|js\/[a-z-]+\.js|media\/voice-order-demo\.(mp4|jpg|vtt)|media\/voice-sample-0[1-4]\.mp3)$/.test(relative)) throw new AppError(404, '페이지를 찾지 못했어요.');
     const file = join(publicDir, relative);
     if (relative === 'media/voice-order-demo.mp4') {
       const { size } = await stat(file); let start = 0, end = size - 1;
@@ -307,7 +307,7 @@ async function handle(req, res) {
       const stream = createReadStream(file, { start, end }); stream.on('error', () => res.destroy()); res.on('close', () => stream.destroy()); return stream.pipe(res);
     }
     const content = await readFile(file);
-    const types = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.svg': 'image/svg+xml', '.jpg': 'image/jpeg', '.vtt': 'text/vtt; charset=utf-8' };
+    const types = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.svg': 'image/svg+xml', '.jpg': 'image/jpeg', '.vtt': 'text/vtt; charset=utf-8', '.mp3': 'audio/mpeg' };
     res.writeHead(200, { 'Content-Type': types[extname(file)], 'Cache-Control': 'no-cache' });
     res.end(method === 'HEAD' ? undefined : content);
   } catch (e) {
