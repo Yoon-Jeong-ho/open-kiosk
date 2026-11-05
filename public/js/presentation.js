@@ -63,7 +63,7 @@ export function parsePresentationCommand(input, current = defaultPreferences) {
     language, reset,
     text_delta: (textTarget || both) && !maximum && !minimum && !readable ? direction : 0,
     image_delta: (imageTarget || both) && !maximum && !minimum ? direction : 0,
-    text_size: readable ? Math.max(normalizePreferences(current).textScale, 1.4) : (textTarget || both) && (maximum || minimum) ? maximum ? 1.6 : .9 : null,
+    text_size: readable ? Math.max(normalizePreferences(current).textScale + .15, 1.4) : (textTarget || both) && (maximum || minimum) ? maximum ? 1.6 : .9 : null,
     image_size: (imageTarget || both) && (maximum || minimum) ? maximum ? 1.5 : .75 : null,
   });
 }

@@ -47,6 +47,7 @@ test('a complaint about tiny text selects readable text without shrinking an alr
   const text = '글씨가 왜 이리 작아, 글씨 좀 키워줘!';
   const next = applyPresentation(normalizePreferences(), parsePresentationCommand(text));
   assert.equal(next.textScale, 1.4); assert.equal(next.imageScale, 1);
+  assert.equal(applyPresentation(next, parsePresentationCommand(text, next)).textScale, 1.55);
   const large = normalizePreferences({ textScale: 1.6 });
   assert.equal(applyPresentation(large, parsePresentationCommand(text, large)).textScale, 1.6);
 });
