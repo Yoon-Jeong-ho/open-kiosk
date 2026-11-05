@@ -1,0 +1,32 @@
+# Dependencies and generated files
+node_modules/
+.pnpm-store/
+.next/
+dist/
+build/
+coverage/
+.venv/
+__pycache__/
+*.pyc
+
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+.codex/
+
+# Runtime or personal data
+data/
+.data/
+uploads/
+recordings/
+*.sqlite
+*.sqlite3
+*.db
+
+# Local scratch and logs
+work/
+*.log
+.DS_Store
