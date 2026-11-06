@@ -90,6 +90,8 @@ test('unavailable AI is explicitly reported without changing the cart', async ()
   const call = client(); const state = (await add(call, await bootstrap(call))).data;
   const result = await call('/api/kiosk/interpret', 'POST', { text: '한 잔만 차갑게', revision: state.revision });
   assert.equal(result.status, 503); assert.equal(result.data.code, 'ai_not_configured');
+  assert.equal((await call('/api/kiosk/speak','POST',{text:'Welcome.',language:'en'})).status,503);
+  for(const body of [{text:'',language:'en'},{text:'x'.repeat(1201),language:'en'},{text:'Welcome.',language:'unsupported'}]) assert.equal((await call('/api/kiosk/speak','POST',body)).status,400);
   assert.deepEqual((await call('/api/kiosk/state')).data.cart, state.cart);
 });
 test('help requests are delivered to the correct virtual merchant', async () => {

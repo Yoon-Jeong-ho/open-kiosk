@@ -3,9 +3,13 @@ import { languages, tr, productName, priceText, addonName, quantityText } from '
 import { parseMenuNavigation, isRecommendationRequest } from './menu-intent.js';
 import { executeVoiceAudio } from './voice-flow.js';
 import { normalizePreferences, applyPresentation, parsePresentationCommand } from './presentation.js';
+import { openHandsFree } from './hands-free.js';
+import { utteranceLanguage, conversationCommand, dialogCommand, recentTurns, canListen, dispatchDialogCommand, speechVoice } from './conversation.js';
 
 export async function kioskPage(main) {
-  let alive = true, busy = false, state, category = 'all', recording, recordTimer, micPending = false, audioConsent = false, uiRevision = 0;
+  let alive = true, busy = false, state, category = 'all', menuRevision = 0, micPending = false, uiRevision = 0;
+  let handsFree, voicePaused = false, speaking = false, speechVersion = 0, speechTimer, speechStartTimer, speechUtterance, guidanceAbort, guidanceAudio, guidanceUrl, speechResumeTimer, speechDialog, resumeAfter = 0, turns = [], failures = 0, entryRead = true;
+  const dialogActions = new WeakMap();
   const controller = new AbortController();
   const params = new URLSearchParams(location.search);
   const menuDemo = params.get('demo') === 'menu';
@@ -24,31 +28,71 @@ export async function kioskPage(main) {
   const temperature = (n) => n === 'hot' ? t('hot') : n === 'iced' ? t('iced') : '';
   const countText = (n, product) => quantityText(n, product, prefs.language);
   let lastReply = t('initial');
-  const speak = (text, force = false) => {
-    if ((!prefs.read && !force) || !('speechSynthesis' in window) || recording || demoPlaying) return;
-    speechSynthesis.cancel(); const utterance = new SpeechSynthesisUtterance(text);
+  const cancelSpeech = () => { speechVersion++; clearTimeout(speechTimer); clearTimeout(speechStartTimer); clearTimeout(speechResumeTimer); speaking = false; speechUtterance = null; guidanceAbort?.abort(); guidanceAudio?.pause(); if (guidanceUrl) URL.revokeObjectURL(guidanceUrl); guidanceAbort = null; guidanceAudio = null; guidanceUrl = null; resumeAfter = Date.now() + 450; if ('speechSynthesis' in window) speechSynthesis.cancel(); speechResumeTimer = setTimeout(() => { if (alive) refreshHandsFree(); }, 450); };
+  const nativeSpeak = (text, force = false) => {
+    if ((!prefs.read && !force) || !('speechSynthesis' in window) || demoPlaying) return;
+    cancelSpeech(); speaking = true; speechDialog = $('dialog[open]'); handsFree?.pause(); paintVoice('speaking');
+    const version = speechVersion; const utterance = speechUtterance = new SpeechSynthesisUtterance(text);
     utterance.lang = languages.find((l) => l.id === prefs.language).speech; utterance.rate = .92;
-    const voice = speechSynthesis.getVoices().find((v) => v.lang.startsWith(prefs.language));
+    const voices = speechSynthesis.getVoices(); const voice = speechVoice(voices, prefs.language);
+    const done = () => { if (version !== speechVersion) return; clearTimeout(speechTimer); clearTimeout(speechResumeTimer); speaking = false; speechUtterance = null; resumeAfter = Date.now() + 450; speechResumeTimer = setTimeout(() => { if (alive) refreshHandsFree(); }, 450); };
+    utterance.onstart = () => { if (version === speechVersion) $('#voice-panel').dataset.guidanceResult = 'started'; };
+    utterance.onend = () => { if (version === speechVersion) $('#voice-panel').dataset.guidanceResult = 'completed'; done(); };
+    utterance.onerror = (event) => { if (version === speechVersion) { $('#voice-panel').dataset.guidanceResult = String(event.error || 'unavailable'); $('#speech-note').textContent = t('speechNotInstalled'); done(); } };
+    if (voices.length && !voice) { $('#speech-note').textContent = t('speechNotInstalled'); done(); return; }
     if (voice) utterance.voice = voice;
-    speechSynthesis.speak(utterance);
+    $('#voice-panel').dataset.guidanceLanguage = utterance.lang;
+    $('#voice-panel').dataset.guidanceVoice = voice?.lang || utterance.lang;
+    $('#voice-panel').dataset.guidanceVoiceName = voice?.name || '';
+    $('#voice-panel').dataset.guidanceResult = 'speaking';
+    $('#speech-note').textContent = '';
+    speechTimer = setTimeout(() => { if (version === speechVersion) { utterance.onerror = null; speechSynthesis.cancel(); $('#voice-panel').dataset.guidanceResult = 'timeout'; $('#speech-note').textContent = t('speechNotInstalled'); done(); } }, 60000);
+    // Chrome may cancel a new utterance when cancel() and speak() share a task.
+    speechStartTimer = setTimeout(() => { if (alive && version === speechVersion) { speechSynthesis.resume(); speechSynthesis.speak(speechUtterance); } }, 80);
+  };
+  const speak = (text, force = false) => {
+    if ((!prefs.read && !force) || demoPlaying) return;
+    cancelSpeech(); speaking = true; speechDialog = $('dialog[open]'); handsFree?.pause(); paintVoice('speaking');
+    const version = speechVersion, language = prefs.language; const abort = guidanceAbort = new AbortController();
+    const panel = $('#voice-panel'); panel.dataset.guidanceLanguage = languages.find((l) => l.id === language).speech; panel.dataset.guidanceVoiceName = 'OpenAI alloy'; panel.dataset.guidanceResult = 'preparing'; $('#speech-note').textContent = '';
+    const done = () => {
+      if (version !== speechVersion) return;
+      clearTimeout(speechTimer); speaking = false; guidanceAudio = null; guidanceAbort = null;
+      if (guidanceUrl) URL.revokeObjectURL(guidanceUrl); guidanceUrl = null;
+      resumeAfter = Date.now() + 450; clearTimeout(speechResumeTimer); speechResumeTimer = setTimeout(() => { if (alive) refreshHandsFree(); }, 450);
+    };
+    const fallback = () => { if (alive && version === speechVersion) { nativeSpeak(text, force); } };
+    speechTimer = setTimeout(() => { if (version === speechVersion) { abort.abort(); fallback(); } }, 35000);
+    fetch('/api/kiosk/speak', {method:'POST',headers:{'Content-Type':'application/json','X-Open-Kiosk':'1'},body:JSON.stringify({text:String(text).slice(0,1200),language}),signal:abort.signal})
+      .then(async (response) => {
+        if (!response.ok) throw new Error('speech_unavailable'); const blob = await response.blob();
+        if (!alive || version !== speechVersion) return;
+        guidanceUrl = URL.createObjectURL(blob); const audio = guidanceAudio = new Audio(guidanceUrl);
+        audio.onplay = () => { if (version === speechVersion) panel.dataset.guidanceResult = 'started'; };
+        audio.onended = () => { if (version === speechVersion) panel.dataset.guidanceResult = 'completed'; done(); };
+        audio.onerror = fallback; await audio.play();
+      }).catch(fallback);
   };
   const status = (text, error = false) => {
     lastReply = text;
     if (!alive || !$('#assistant-message')) return;
     $('#assistant-message').textContent = text;
     $('#assistant-box').classList.toggle('assistant-error', error);
-    speak(text);
+    if (text !== t('busy')) speak(text);
   };
   const positionDialog = (d) => {
     const screen = $('.device-screen'); if (!screen) return;
     const r = screen.getBoundingClientRect();
-    Object.assign(d.style, { left: `${r.left + r.width / 2}px`, top: `${r.top + r.height / 2}px`, margin: '0', transform: 'translate(-50%,-50%)', maxHeight: `${r.height - 28}px`, width: `${Math.min(440, r.width - 28)}px` });
+    Object.assign(d.style, { left: `${r.left + r.width / 2}px`, top: `${r.top + r.height / 2}px`, margin: '0', transform: 'translate(-50%,-50%)', maxHeight: `${r.height - 28}px`, width: `${Math.min(d.classList.contains('entry-modal') ? 560 : 440, r.width - 28)}px` });
     d.style.setProperty('--text-scale', prefs.textScale);
     d.style.setProperty('--image-scale', prefs.imageScale);
   };
   const modal = (content, cls = '') => {
     const d = dialog(content, `kiosk-modal ${cls}`); d.lang = prefs.language;
-    $('.modal-close', d).setAttribute('aria-label', t('close')); positionDialog(d); return d;
+    $('.modal-close', d).setAttribute('aria-label', t('close')); positionDialog(d);
+    const heading = $('h2', d); if (heading) { heading.tabIndex = -1; heading.focus({ preventScroll: true }); }
+    d.addEventListener('close', () => { if (speechDialog === d) cancelSpeech(); refreshHandsFree(); if (alive && !demoMode && !$('dialog[open]')) $('#voice-order')?.focus({ preventScroll: true }); });
+    handsFree?.pause(); return d;
   };
   const paintMenu = () => {
     $('.kiosk-menu-title').textContent = t(category === 'all' ? 'menuTitle' : category);
@@ -56,7 +100,7 @@ export async function kioskPage(main) {
   };
   const navigateMenu = (next, announce = true) => {
     if (!['all', 'coffee', 'tea', 'dessert', 'brunch'].includes(next)) return;
-    category = next;
+    category = next; menuRevision++;
     $$('[data-category]').forEach((button) => { const selected = button.dataset.category === category; button.classList.toggle('active', selected); button.setAttribute('aria-pressed', String(selected)); });
     paintMenu(); $('#kiosk-menu').scrollTop = 0;
     if (announce) status(t('menuMoved', { category: t(category) }));
@@ -81,6 +125,7 @@ export async function kioskPage(main) {
     $('.skip-link').textContent = t('skip');
     paintVoice();
     $('#view-settings').setAttribute('aria-label', t('view'));
+    $('#kiosk-menu').setAttribute('aria-label', t('menuTitle'));
     $('.category-tabs').setAttribute('aria-label', t('menuTitle'));
     $$('[data-size]').forEach((button) => button.setAttribute('aria-label', `${t(button.dataset.size === 'text' ? 'textSize' : 'imageSize')} ${t(button.dataset.delta === '1' ? 'larger' : 'smaller')}`));
     paintMenu(); paintCart();
@@ -100,7 +145,7 @@ export async function kioskPage(main) {
   };
   const applyUI = (patch, announce = true) => {
     const previous = prefs; prefs = applyPresentation(prefs, patch); uiRevision++;
-    if (previous.language !== prefs.language) paintLanguage();
+    if (previous.language !== prefs.language) { cancelSpeech(); paintLanguage(); }
     preferences();
     if (!announce) return;
     const changes = [];
@@ -114,12 +159,12 @@ export async function kioskPage(main) {
   };
   const acceptState = (next) => { const changed = JSON.stringify(state.products) !== JSON.stringify(next.products); state = next; if (changed) paintMenu(); paintCart(); };
   const setBusy = (value) => {
-    busy = value; $('#send-order').disabled = value || !!recording || micPending; $('#voice-order').disabled = value || micPending || demoRunning;
-    $('#order-text').disabled = value || !!recording || micPending;
-    if ($('#demo-voice-next')) $('#demo-voice-next').disabled = value || !!recording || micPending || demoRunning || demoIndex >= demoSamples.length;
-    if ($('#demo-run-all')) $('#demo-run-all').disabled = value || !!recording || micPending || demoRunning;
+    busy = value; $('#send-order').disabled = value || micPending; $('#voice-order').disabled = (!handsFree && value) || micPending || demoRunning;
+    $('#order-text').disabled = value || micPending;
+    if ($('#demo-voice-next')) $('#demo-voice-next').disabled = value || micPending || demoRunning || demoIndex >= demoSamples.length;
+    if ($('#demo-run-all')) $('#demo-run-all').disabled = value || micPending || demoRunning;
     $('#composer').setAttribute('aria-busy', String(value));
-    $('#send-order').innerHTML = value ? `<span class="button-spinner"></span><span class="sr-only">${e(t('busy'))}</span>` : icon('arrow'); paintCart();
+    $('#send-order').innerHTML = value ? `<span class="button-spinner"></span><span class="sr-only">${e(t('busy'))}</span>` : icon('arrow'); paintCart(); refreshHandsFree();
   };
   const fail = async (err) => {
     if (!alive) return;
@@ -128,7 +173,7 @@ export async function kioskPage(main) {
     status(prefs.language === 'ko' ? err.message : t(key), true);
   };
   const change = async (operation) => {
-    if (busy) return; setBusy(true);
+    if (busy) return; turns = []; setBusy(true);
     try { const next = await api('/api/kiosk/action', { method: 'POST', body: { revision: state.revision, operation } }); if (alive) { acceptState(next); status(t(state.cart.length ? 'cartChanged' : 'cartCleared')); } }
     catch (err) { await fail(err); } finally { if (alive) setBusy(false); }
   };
@@ -136,8 +181,10 @@ export async function kioskPage(main) {
     const product = state.products.find((p) => p.id === line.product_id);
     const d = modal(`<div class="modal-heading"><h2>${e(name(line))}</h2><p>${e(temperature(line.temperature))} · ${line.quantity}</p></div>${addonControls(product, line.addons)}<button id="save-addons" class="btn btn-dark full-width">${e(t('saveAddons'))}</button>`);
     $('#save-addons', d).onclick = () => { const addons = $$('input[name=addon]:checked', d).map((el) => el.value); d.close(); change({ type: 'addons', line_id: line.id, addons }); };
+    dialogActions.set(d, { addon: (id, enabled) => { const checkbox = $(`input[name=addon][value="${id}"]`, d); if (checkbox) checkbox.checked = enabled; status(t('saveAddons')); }, accept: () => $('#save-addons', d).click(), free: true }); status(`${name(line)}. ${t('addons')}. ${t('addHint')}`); refreshHandsFree();
   };
   const chooseProduct = (product) => {
+    turns = [];
     const needsTemp = product.temperatures.length > 0;
     let selected = product.temperatures.length === 1 ? product.temperatures[0] : null; let q = 1; let selectedAddons = [];
     const d = modal(`<div class="product-modal-art" style="--product-bg:${e(product.color)}" aria-hidden="true">${drinkArt(product)}</div><div class="product-modal-title"><h2>${e(name(product))}</h2><b>${e(money(product.price))}</b></div>${needsTemp ? `<fieldset class="temperature-options"><legend>${e(t('chooseTemp'))}</legend>${product.temperatures.map((v) => `<label><input type="radio" name="temperature" value="${v}" ${selected === v ? 'checked' : ''}><span>${v === 'hot' ? '☀' : '❄'} ${e(temperature(v))}</span></label>`).join('')}</fieldset>` : ''}${addonControls(product)}<div class="product-quantity"><b>${e(t('quantity'))}</b><div class="quantity-control"><button id="quantity-minus" aria-label="${e(t('less'))}">${icon('minus')}</button><span id="quantity-value">1</span><button id="quantity-plus" aria-label="${e(t('more'))}">${icon('plus')}</button></div></div><button id="add-to-cart" class="btn btn-dark full-width" disabled></button>`, 'product-modal');
@@ -147,6 +194,8 @@ export async function kioskPage(main) {
     $('#quantity-minus', d).onclick = () => { q = Math.max(1, q - 1); update(); };
     $('#quantity-plus', d).onclick = () => { q = Math.min(20, q + 1); update(); };
     $('#add-to-cart', d).onclick = () => { d.close(); change({ type: 'add', product_id: product.id, quantity: q, temperature: selected, addons: selectedAddons }); }; update();
+    dialogActions.set(d, { quantity: (value) => { q = value; update(); status(`${countText(q, product)}. ${needsTemp && !selected ? t('tempHint') : t('addHint')}`); }, addon: (id, enabled) => { const checkbox = $(`input[name=addon][value="${id}"]`, d); if (!checkbox) return status(t('unavailable')); checkbox.checked = enabled; selectedAddons = $$('input[name=addon]:checked', d).map((input) => input.value); update(); status(`${addonName(id, prefs.language)}. ${t('addHint')}`); }, accept: () => { if ($('#add-to-cart', d).disabled) status(t('tempHint')); else $('#add-to-cart', d).click(); }, temperature: (value, add) => { const radio = $(`input[name=temperature][value="${value}"]`, d); if (!radio) return status(t('chooseTemp')); radio.checked = true; selected = value; update(); if (add) $('#add-to-cart', d).click(); else status(`${temperature(value)}. ${t('addHint')}`); } });
+    status(`${name(product)}. ${money(product.price)}. ${needsTemp && !selected ? t('tempHint') : t('addHint')}`); refreshHandsFree();
   };
   const addRecommendation = (suggestion) => {
     const products = suggestion.product_ids.map((id) => state.products.find((p) => p.id === id));
@@ -157,24 +206,29 @@ export async function kioskPage(main) {
     $$('input', d).forEach((input) => input.onchange = update); update();
     $('#add-recommendation', d).onclick = async () => {
       const operations = products.map((p) => ({ type: 'add', product_id: p.id, quantity: 1, temperature: selectedTemperature(p) }));
-      d.close(); setBusy(true);
+      d.close(); turns = []; setBusy(true);
       try { const next = await api('/api/kiosk/action', { method: 'POST', body: { revision: state.revision, operations } }); if (alive) { acceptState(next); status(t('cartChanged')); } }
       catch (err) { await fail(err); } finally { if (alive) setBusy(false); }
     };
+    dialogActions.set(d, { accept: () => { if ($('#add-recommendation', d).disabled) status(t('tempHint')); else $('#add-recommendation', d).click(); }, temperature: (value, add) => { for (const radio of $$(`input[type=radio][value="${value}"]`, d)) radio.checked = true; update(); if (add && !$('#add-recommendation', d).disabled) $('#add-recommendation', d).click(); else status(`${temperature(value)}. ${t('addHint')}`); } });
+    status(products.map((p) => `${name(p)} ${countText(1, p)}`).join(', ') + '. ' + (products.some((p) => p.temperatures.length > 1) ? t('tempHint') : t('addHint'))); refreshHandsFree();
   };
   const showRecommendations = (suggestions) => {
     const d = modal(`<div class="modal-heading"><h2>${e(t('recommendResults'))}</h2><p>${e(t('recommendBasis'))}</p></div><div class="recommendation-list">${suggestions.map((suggestion, i) => `<article><h3>${e(suggestion.title)}</h3><p>${e(suggestion.reason)}</p><div class="recommended-items">${suggestion.product_ids.map((id) => { const p = state.products.find((p) => p.id === id); return `<div><span class="recommend-art" style="--product-bg:${e(p.color)}" aria-hidden="true">${drinkArt(p)}</span><span><b>${e(name(p))}</b><small>${e(countText(1, p))} · ${e(money(p.price))}</small></span></div>`; }).join('')}</div><div class="recommendation-total"><strong>${e(money(suggestion.total))}</strong><button class="btn btn-outline" data-recommendation="${i}">${e(t('chooseCombo'))}</button></div></article>`).join('')}</div>`, 'recommendations-modal');
     $$('[data-recommendation]', d).forEach((button) => button.onclick = () => { d.close(); addRecommendation(suggestions[Number(button.dataset.recommendation)]); });
+    dialogActions.set(d, { choice: (index) => { const button = $(`[data-recommendation="${index}"]`, d); if (button) button.click(); else status(t('choiceHint')); } });
+    status(suggestions.map((s, i) => `${i + 1}. ${s.title}. ${money(s.total)}.`).join(' ') + ' ' + t('choiceHint')); refreshHandsFree();
   };
   const sendRecommendation = async (text) => {
     if (!text.trim() || busy) return; setBusy(true);
     try { await interpretRequest(text); } catch (err) { await fail(err); } finally { if (alive) setBusy(false); }
   };
   const openRecommendationPrompt = () => {
-    if (busy || recording) return;
+    if (busy) return;
     const d = modal(`<div class="modal-heading"><h2>${e(t('recommendTitle'))}</h2></div><div class="recommendation-choices">${[['recommendMeal', 'promptMeal'], ['recommendSweet', 'promptSweet'], ['recommendBudget', 'promptBudget']].map(([label, prompt]) => `<button class="btn btn-outline" data-recommend-prompt="${prompt}">${e(t(label))}</button>`).join('')}</div><form id="recommendation-form"><label class="form-label" for="recommendation-text">${e(t('recommendInput'))}</label><input class="form-input" id="recommendation-text" maxlength="400" placeholder="${e(t('recommendPlaceholder'))}"><button class="btn btn-dark full-width" type="submit">${e(t('recommendSubmit'))}</button></form>`);
     $$('[data-recommend-prompt]', d).forEach((button) => button.onclick = () => { d.close(); sendRecommendation(t(button.dataset.recommendPrompt)); });
     $('#recommendation-form', d).onsubmit = (event) => { event.preventDefault(); const text = $('#recommendation-text', d).value.trim(); if (!text) return; d.close(); sendRecommendation(text); };
+    dialogActions.set(d, { free: true }); status(t('recommendTitle')); refreshHandsFree();
   };
   const reviewOrder = () => {
     if (!state.cart.length || busy) return;
@@ -188,24 +242,45 @@ export async function kioskPage(main) {
         if (!alive) { d.close(); return; }
         acceptState(await api('/api/kiosk/state')); d.close();
         const success = modal(`<div class="success-order"><span class="success-seal">${icon('check')}</span><h2>${e(t('doneTitle'))}</h2><span class="order-ticket"><small>${e(t('orderNumber'))}</small><strong>${String(result.order.number).padStart(3, '0')}</strong><span>${e(review.store.name)}</span></span><p class="form-footnote">${e(money(result.order.total))} · ${e(t('demo'))}</p><button class="btn btn-dark full-width" id="new-order">${e(t('newOrder'))} ${icon('arrow')}</button></div>`);
-        $('#new-order', success).onclick = () => success.close(); status(t('orderReceived', { number: result.order.number }));
+        turns = []; voicePaused = true; handsFree?.stop(); handsFree = null;
+        $('#new-order', success).onclick = () => { success.close(); openEntry(); }; status(t('orderReceived', { number: result.order.number }));
       } catch (err) {
         if (d.isConnected) { $('#confirm-error', d).textContent = prefs.language === 'ko' ? err.message : t('errorStale'); btn.disabled = false; }
         await fail(err); if (err.status === 409 && d.isConnected) { btn.disabled = true; $('#return-to-order', d).focus(); }
       }
     };
+    dialogActions.set(d, { review: true, needsConfirmation: () => status(t('confirmHint')), accept: () => { if (!$('#confirm-order', d).disabled) $('#confirm-order', d).click(); } });
+    status(orderDescription(review) + '. ' + t('confirmHint')); refreshHandsFree();
   };
   const interpretRequest = async (text) => {
+    const detected = utteranceLanguage(text, prefs.language);
+    if (detected !== prefs.language) applyUI({ language: detected }, false);
+    const control = conversationCommand(text);
+    if (control?.type === 'pause') { voicePaused = true; refreshHandsFree(); status(t('voicePaused')); return; }
+    if (control?.type === 'read_on' || control?.type === 'read_off') { prefs.read = control.type === 'read_on'; preferences(); if (prefs.read) speak(lastReply, true); else { cancelSpeech(); refreshHandsFree(); } return; }
+    if (control?.type === 'help') { if (!$('#request-help').disabled) $('#request-help').click(); return; }
+    if (control?.type === 'repeat') { speak(lastReply, true); return; }
+    if (control?.type === 'menu') { status(state.products.filter((p) => p.available && (category === 'all' || p.category === category)).map((p) => `${name(p)} ${money(p.price)}`).join('. ') + '. ' + t('menuReadHint')); return; }
+    if (control?.type === 'cart') { status(orderDescription(state)); return; }
+    const open = $('dialog[open]');
+    if (open) {
+      const command = dialogCommand(text), actions = dialogActions.get(open);
+      if (command?.type === 'cancel') { open.close(); status(t('back')); return; }
+      if (dispatchDialogCommand(text, actions)) return;
+      if (actions) open.close();
+      else return;
+    }
     const display = parsePresentationCommand(text, prefs);
     if (display) { applyUI(display); return; }
     const navigation = parseMenuNavigation(text);
     if (navigation) { navigateMenu(navigation); return; }
-    const version = uiRevision; const language = prefs.language;
+    const version = uiRevision; const menuVersion = menuRevision; const language = prefs.language;
     status(t('busy'));
-    const next = await api('/api/kiosk/interpret', { method: 'POST', body: { text, language, revision: state.revision }, signal: controller.signal });
+    const next = await api('/api/kiosk/interpret', { method: 'POST', body: { text, language, context: recentTurns(turns), revision: state.revision }, signal: controller.signal });
     if (!alive) return;
+    turns = recentTurns([...turns, { role: 'user', text }, { role: 'assistant', text: next.reply }]);
     acceptState(next);
-    if (next.navigation) navigateMenu(next.navigation, false);
+    if (next.navigation && menuRevision === menuVersion) navigateMenu(next.navigation, false);
     if (uiRevision === version) applyUI(next.presentation || {}, false);
     status(language === prefs.language || next.presentation?.language === prefs.language ? next.reply : t('cartChanged'));
     if (next.recommendations?.length) { setBusy(false); showRecommendations(next.recommendations); }
@@ -213,7 +288,7 @@ export async function kioskPage(main) {
     else if (next.review) { setBusy(false); reviewOrder(); }
   };
   const submitText = async () => {
-    const input = $('#order-text'); const text = input.value.trim(); if (!text || busy || recording || micPending) return;
+    const input = $('#order-text'); const text = input.value.trim(); if (!text || busy || micPending) return;
     setBusy(true);
     try { await interpretRequest(text); if (alive) input.value = ''; }
     catch (err) { await fail(err); }
@@ -222,35 +297,32 @@ export async function kioskPage(main) {
   const paintVoice = (phase = voicePhase) => {
     voicePhase = phase; const panel = $('#voice-panel'); if (!alive || !panel) return;
     panel.dataset.phase = phase;
-    const keys = { idle: 'voiceHint', listening: 'voiceListening', sample: 'demoVoice', transcribing: 'transcribing', applying: 'voiceApplying', done: 'voiceDone', error: 'voiceError' };
+    const keys = { idle: 'voiceHint', waiting: 'autoListening', paused: 'voicePaused', speaking: 'speaking', listening: 'voiceListening', sample: 'demoVoice', transcribing: 'transcribing', applying: 'voiceApplying', done: 'voiceDone', error: 'voiceError' };
     $('#voice-state').textContent = t(keys[phase] || 'voiceHint');
     $('#voice-heard').textContent = heardText; $('#voice-caption').hidden = !heardText;
     const b = $('#voice-order'); b.classList.toggle('recording', phase === 'listening');
-    b.innerHTML = `${phase === 'listening' ? '<span class="voice-stop-square"></span>' : icon('mic')}<span>${e(t(phase === 'listening' ? 'stopRecord' : 'voice'))}</span>`;
-    b.setAttribute('aria-label', t(phase === 'listening' ? 'stopRecord' : 'voice'));
+    const label = handsFree ? voicePaused ? 'resumeVoice' : 'pauseVoice' : phase === 'listening' ? 'stopRecord' : 'voice';
+    b.innerHTML = `${phase === 'listening' ? '<span class="voice-stop-square"></span>' : icon('mic')}<span>${e(t(label))}</span>`;
+    b.setAttribute('aria-label', t(label)); b.setAttribute('aria-pressed', String(!!handsFree && !voicePaused));
   };
-  const stopRecording = () => { if (recording?.recorder.state === 'recording') recording.recorder.stop(); };
-  const watchLevels = (input, stopOnSilence = false) => {
+  const watchLevels = (input) => {
     levelStop();
-    let context, source, frame; const bars = $$('.voice-wave i'); let lastLoud = performance.now(), heard = false;
+    let context, source, frame; const bars = $$('.voice-wave i');
     try {
       const Context = window.AudioContext || window.webkitAudioContext; context = new Context();
       const analyser = context.createAnalyser(); analyser.fftSize = 256;
       source = input instanceof HTMLMediaElement ? context.createMediaElementSource(input) : context.createMediaStreamSource(input);
       source.connect(analyser); if (input instanceof HTMLMediaElement) analyser.connect(context.destination);
       context.resume().catch(() => {});
-      const data = new Uint8Array(analyser.frequencyBinCount), waveform = new Uint8Array(analyser.fftSize);
+      const data = new Uint8Array(analyser.frequencyBinCount);
       const tick = () => {
         if (!alive) return;
-        analyser.getByteFrequencyData(data); analyser.getByteTimeDomainData(waveform);
+        analyser.getByteFrequencyData(data);
         bars.forEach((bar, i) => bar.style.setProperty('--level', Math.max(.12, data[3 + i * 3] / 180)));
-        const rms = Math.sqrt(waveform.reduce((n, v) => n + ((v - 128) / 128) ** 2, 0) / waveform.length);
-        if (rms > .018) { heard = true; lastLoud = performance.now(); }
-        if (stopOnSilence && heard && performance.now() - lastLoud > 2000) { stopRecording(); return; }
         frame = requestAnimationFrame(tick);
       };
       frame = requestAnimationFrame(tick);
-    } catch { /* The stop button and time limit still work without a level meter. */ }
+    } catch { /* Demo audio still plays without a level meter. */ }
     levelStop = () => { cancelAnimationFrame(frame); source?.disconnect(); if (context && context.state !== 'closed') context.close().catch(() => {}); bars.forEach((bar) => bar.style.setProperty('--level', .12)); };
   };
   const processAudio = async (audio) => {
@@ -263,42 +335,53 @@ export async function kioskPage(main) {
         onTranscript: (text) => { heardText = text; },
         isActive: () => alive,
       });
-      return true;
-    } catch (err) { if (alive) await fail(err); return false; }
+      failures = 0; return true;
+    } catch (err) { if (alive) { failures++; if (handsFree && (failures >= 3 || [401, 429, 503].includes(err.status))) voicePaused = true; await fail(err); } return false; }
     finally { if (alive) setBusy(false); }
   };
-  const startRecording = async () => {
-    if (micPending || recording || busy) return;
-    if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder || !window.isSecureContext) return status(t('micUnavailable'), true);
-    micPending = true; $('#voice-order').disabled = true; let openedStream;
-    try {
-      if ('speechSynthesis' in window) speechSynthesis.cancel();
-      const stream = openedStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      if (!alive) { stream.getTracks().forEach((v) => v.stop()); return; }
-      const type = ['audio/webm', 'audio/mp4'].find((v) => MediaRecorder.isTypeSupported(v));
-      if (!type) { stream.getTracks().forEach((v) => v.stop()); return status(t('micUnavailable'), true); }
-      const recorder = new MediaRecorder(stream, { mimeType: type }); const chunks = []; const session = { recorder, stream, aborted: false }; recording = session;
-      recorder.ondataavailable = (event) => { if (event.data.size) chunks.push(event.data); };
-      recorder.onstop = async () => {
-        clearTimeout(recordTimer); levelStop(); stream.getTracks().forEach((v) => v.stop()); recording = null;
-        if (!alive || session.aborted) return;
-        await processAudio(new Blob(chunks, { type }));
-      };
-      recorder.onerror = () => { session.aborted = true; clearTimeout(recordTimer); levelStop(); stream.getTracks().forEach((v) => v.stop()); recording = null; if (alive) { paintVoice('error'); setBusy(false); status(t('micDenied'), true); } };
-      heardText = ''; recorder.start(); paintVoice('listening'); watchLevels(stream, true);
-      $('#send-order').disabled = true; $('#order-text').disabled = true;
-      $('#assistant-message').textContent = t('voiceListening'); recordTimer = setTimeout(stopRecording, 20000);
-    } catch { openedStream?.getTracks().forEach((track) => track.stop()); levelStop(); recording = null; paintVoice('error'); status(t('micDenied'), true); }
-    finally { micPending = false; if (alive) { $('#voice-order').disabled = busy; $('#send-order').disabled = busy || !!recording; } }
-  };
   const voice = () => {
-    if (recording) return stopRecording(); if (busy) return; if (audioConsent) return startRecording();
-    const d = modal(`<div class="modal-heading">${icon('mic')}<h2>${e(t('audioTitle'))}</h2><p>${e(t('audioNotice'))}</p></div><p class="form-footnote">${e(t('audioDuration'))}</p><button class="btn btn-dark full-width" id="agree-recording">${e(t('agreeRecord'))} ${icon('mic')}</button><button class="btn btn-plain full-width" id="use-keyboard">${e(t('keyboardInstead'))}</button>`);
-    $('#agree-recording', d).onclick = () => { audioConsent = true; d.close(); startRecording(); };
-    $('#use-keyboard', d).onclick = () => { d.close(); $('#keyboard-entry').hidden = false; $('#keyboard-toggle').setAttribute('aria-expanded', 'true'); $('#order-text').focus(); };
+    if (handsFree) { voicePaused = !voicePaused; cancelSpeech(); refreshHandsFree(); if (voicePaused) status(t('voicePaused')); return; }
+    if (busy) return; openEntry();
+  };
+  const orderDescription = (order) => order.cart.length ? order.cart.map((line) => `${name(line)} ${temperature(line.temperature)} ${countText(line.quantity, line)}${line.addons?.length ? ', ' + addonText(line) : ''}`).join('. ') + `. ${t('total')} ${money(order.total)}` : t('empty');
+  const refreshHandsFree = () => {
+    if (!alive) return;
+    if (!handsFree) { if (!demoMode && !busy && !speaking) paintVoice('idle'); return; }
+    const open = $('dialog[open]');
+    if (voicePaused || document.hidden || !handsFree.isActive()) { handsFree.pause(); paintVoice('paused'); }
+    else if (!canListen({ busy: busy || micPending, speaking, dialogAllowed: !open || dialogActions.has(open), resumeAfter })) { handsFree.pause(); if (speaking) paintVoice('speaking'); }
+    else { handsFree.resume(); paintVoice('waiting'); }
+  };
+  const openEntry = () => {
+    if (!alive || demoMode || $('dialog[open]')) return;
+    cancelSpeech(); handsFree?.stop(); handsFree = null; voicePaused = false;
+    const d = modal(`<div class="entry-content"><div class="entry-icon" aria-hidden="true">${icon('mic')}${icon('grid')}</div><div class="modal-heading"><h2>${e(t('entryTitle'))}</h2><p>${e(t('entryHint'))}</p></div><div class="entry-languages" role="group" aria-label="${e(t('language'))}">${languages.map((language) => `<button type="button" lang="${language.id}" data-entry-language="${language.id}" aria-pressed="${language.id === prefs.language}"><span aria-hidden="true">${language.flag}</span> ${language.label}</button>`).join('')}</div><label class="entry-read"><input type="checkbox" id="entry-read" ${entryRead ? 'checked' : ''}><span>${e(t('entryRead'))}</span></label><p class="entry-reader-hint">${e(t('entryReadHint'))}</p><p class="entry-notice">${e(t('entryAudioNotice'))}</p><p id="entry-error" class="form-error" role="alert"></p></div><div class="entry-actions"><button id="entry-voice" class="btn btn-dark full-width">${e(t('startTogether'))}</button><button id="entry-touch" class="btn btn-plain full-width">${e(t('startTouch'))}</button></div><p class="entry-shortcuts sr-only">${e(t('keyboardHelp'))}</p>`, 'entry-modal');
+    // This essential preparation dialog stays open until an explicit start choice.
+    $('.modal-close', d).hidden = true;
+    d.addEventListener('cancel', (event) => event.preventDefault());
+    $$('[data-entry-language]', d).forEach((button) => button.onclick = () => { entryRead = $('#entry-read', d).checked; applyUI({ language: button.dataset.entryLanguage }, false); d.close(); openEntry(); });
+    $('#entry-touch', d).onclick = () => { prefs.read = $('#entry-read', d).checked; preferences(); d.close(); status(t('initial')); };
+    $('#entry-voice', d).onclick = async () => {
+      if (micPending) return;
+      prefs.read = $('#entry-read', d).checked; preferences(); micPending = true;
+      $('#entry-voice', d).disabled = true; $('#entry-voice', d).textContent = t('preparingMic'); $('#entry-error', d).textContent = '';
+      try {
+        const opened = await openHandsFree({
+          onStart: () => { if (alive) { heardText = ''; paintVoice('listening'); } },
+          onIdle: () => { if (alive) refreshHandsFree(); },
+          onAudio: (audio) => { if (alive && !voicePaused && !busy && !document.hidden) processAudio(audio); },
+          onLevel: (level) => { if (alive) $$('.voice-wave i').forEach((bar, i) => bar.style.setProperty('--level', Math.max(.12, level * (i % 3 === 1 ? .7 : 1)))); },
+          onError: () => { if (alive) { voicePaused = true; handsFree?.stop(); handsFree = null; status(t('micLost'), true); paintVoice('error'); } },
+        });
+        if (!alive || !d.isConnected) { opened.stop(); return; }
+        handsFree = opened; voicePaused = false; failures = 0; micPending = false; d.close();
+        status(t('voiceIntro')); refreshHandsFree();
+      } catch { if (alive && d.isConnected) { $('#entry-error', d).textContent = t('micFailed'); $('#entry-voice', d).disabled = false; $('#entry-voice', d).textContent = t('startTogether'); $('#entry-touch', d).focus(); } }
+      finally { micPending = false; if (alive) { $('#voice-order').disabled = busy && !handsFree; refreshHandsFree(); } }
+    };
   };
   const playDemoVoice = async () => {
-    if (busy || recording || demoIndex >= demoSamples.length) return;
+    if (busy || demoIndex >= demoSamples.length) return;
     $('#voice-panel').dataset.demoStep = String(demoIndex + 1);
     const url = demoSamples[demoIndex].url; heardText = ''; demoPlaying = true; setBusy(true); paintVoice('sample');
     if ('speechSynthesis' in window) speechSynthesis.cancel();
@@ -319,7 +402,7 @@ export async function kioskPage(main) {
   };
 
   const runDemoSequence = async () => {
-    if (!demoMode || busy || recording || demoRunning) return;
+    if (!demoMode || busy || demoRunning) return;
     const wrapper = $('.voice-demo-mode'); demoRunning = true; wrapper.dataset.running = 'true';
     try {
       demoIndex = 0; heardText = ''; category = 'all';
@@ -343,7 +426,7 @@ export async function kioskPage(main) {
     state = await api('/api/kiosk/bootstrap', { method: 'POST', body: { store: new URLSearchParams(location.search).get('store') || 'demo' } });
     if (location.pathname !== '/kiosk') return;
     const sizeControl = (kind, min, max) => `<div class="size-control"><label for="${kind}-scale-input" data-i18n="${kind === 'text' ? 'textSize' : 'imageSize'}"></label><output id="${kind}-scale-value" for="${kind}-scale-input"></output><div><button data-size="${kind}" data-delta="-1" aria-label="${e(t(kind === 'text' ? 'textSize' : 'imageSize'))} ${e(t('smaller'))}">${icon('minus')}</button><input id="${kind}-scale-input" type="range" min="${min}" max="${max}" step=".05"><button data-size="${kind}" data-delta="1" aria-label="${e(t(kind === 'text' ? 'textSize' : 'imageSize'))} ${e(t('larger'))}">${icon('plus')}</button></div></div>`;
-    main.innerHTML = `<section class="kiosk-experience${demoMode ? ' voice-demo-mode' : ''}"><header class="experience-bar"><a class="experience-back" href="/">${icon('arrow')}<span data-i18n="siteBack"></span></a><span class="experience-title" data-i18n="experience"></span><span class="experience-demo" data-i18n="demo"></span><a href="/privacy" target="_blank" rel="noopener" class="experience-data" data-i18n="dataNotice"></a></header>${demoMode ? '<div class="voice-demo-toolbar"><span>합성 음성 시연 · 실제 음성 인식·주문 처리</span><div><button class="btn btn-dark btn-sm" id="demo-run-all">처음부터 연속 시연</button><button class="btn btn-outline btn-sm" id="demo-voice-next">01  글자·그림 키우기</button></div></div>' : ''}<div class="device-shell"><span class="device-camera" aria-hidden="true"></span><div class="device-screen"><div class="kiosk-app"><header class="kiosk-header"><span class="kiosk-store-name">${e(state.store.name)}</span><div class="kiosk-tools"><label class="language-picker"><span class="sr-only" data-i18n="language"></span><select id="language-select">${languages.map((v) => `<option value="${v.id}">${v.label}</option>`).join('')}</select></label><button id="view-settings-toggle" aria-expanded="false" aria-controls="view-settings">${icon('type')}<span data-i18n="view"></span></button><button data-pref="read" aria-pressed="false">${icon('volume')}<span data-i18n="read"></span></button></div></header><section class="kiosk-view-settings" id="view-settings" hidden aria-label="${e(t('view'))}"><div class="view-settings-heading"><strong data-i18n="view"></strong><button class="icon-btn" id="close-settings" data-label="close">${icon('close')}</button></div>${sizeControl('text', .9, 1.6)}${sizeControl('image', .75, 1.5)}<div class="view-settings-bottom"><button id="reset-sizes" data-i18n="reset"></button><button data-pref="contrast" aria-pressed="false" data-i18n="contrast"></button></div></section><div class="kiosk-layout"><section class="kiosk-selection"><h1 class="kiosk-menu-title" data-i18n="menuTitle"></h1><div class="assistant-box" id="assistant-box"><span class="assistant-avatar" aria-hidden="true">✳</span><p id="assistant-message" aria-live="polite" aria-atomic="true"></p><button id="repeat-message" class="icon-btn" data-label="repeat">${icon('volume')}</button></div><div class="category-tabs" role="group" aria-label="${e(t('all'))}"><button class="active" data-category="all" aria-pressed="true" data-i18n="all"></button><button data-category="coffee" aria-pressed="false" data-i18n="coffee"></button><button data-category="tea" aria-pressed="false" data-i18n="tea"></button><button data-category="dessert" aria-pressed="false" data-i18n="dessert"></button><button data-category="brunch" aria-pressed="false" data-i18n="brunch"></button><button id="recommend-menu" class="recommend-trigger" data-i18n="recommend"></button></div><div class="kiosk-menu" id="kiosk-menu"></div><form class="composer" id="composer"><div class="voice-panel" id="voice-panel" data-phase="idle"><button type="button" class="voice-btn" id="voice-order"></button><div class="voice-body"><p id="voice-state" role="status"></p><div class="voice-wave" aria-hidden="true">${Array.from({ length: 16 }, () => '<i></i>').join('')}</div><div class="voice-caption" id="voice-caption" hidden><small data-i18n="heard"></small><p id="voice-heard"></p></div></div><button type="button" class="voice-keyboard-toggle" id="keyboard-toggle" data-label="keyboard" aria-expanded="false" aria-controls="keyboard-entry">${icon('keyboard')}<span data-i18n="keyboard"></span></button></div><div id="keyboard-entry" hidden><div class="composer-input-row"><label class="sr-only" for="order-text" data-i18n="inputLabel"></label><input id="order-text" maxlength="500" autocomplete="off" enterkeyhint="send"><button type="submit" id="send-order" class="send-btn" data-label="send">${icon('arrow')}</button></div></div><p class="composer-note" data-i18n="aiNote"></p></form></section><aside class="cart-panel"><div class="cart-panel-head"><h2 id="cart-heading" tabindex="-1"><span data-i18n="cart"></span><span id="cart-count">0</span></h2><button id="clear-cart" class="small-text-btn" data-i18n="clear"></button></div><div class="cart-lines" id="cart-lines"></div><div class="cart-summary"><div><span data-i18n="total"></span><strong id="cart-total"></strong></div><button id="review-order" class="btn btn-dark full-width" disabled><span data-i18n="review"></span>${icon('arrow')}</button><button id="request-help" class="help-button">${icon('help')}<span data-i18n="help"></span></button></div></aside></div></div></div><span class="device-brand" aria-hidden="true">OPEN KIOSK</span></div></section>`;
+    main.innerHTML = `<section class="kiosk-experience${demoMode ? ' voice-demo-mode' : ''}"><header class="experience-bar"><a class="experience-back" href="/">${icon('arrow')}<span data-i18n="siteBack"></span></a><span class="experience-title" data-i18n="experience"></span><span class="experience-demo" data-i18n="demo"></span><a href="/privacy" target="_blank" rel="noopener" class="experience-data" data-i18n="dataNotice"></a></header>${demoMode ? '<div class="voice-demo-toolbar"><span>합성 음성 시연 · 실제 음성 인식·주문 처리</span><div><button class="btn btn-dark btn-sm" id="demo-run-all">처음부터 연속 시연</button><button class="btn btn-outline btn-sm" id="demo-voice-next">01  글자·그림 키우기</button></div></div>' : ''}<div class="device-shell"><span class="device-camera" aria-hidden="true"></span><div class="device-screen"><div class="kiosk-app" aria-describedby="kiosk-shortcuts"><p class="sr-only" id="kiosk-shortcuts" data-i18n="keyboardHelp"></p><header class="kiosk-header"><span class="kiosk-store-name">${e(state.store.name)}</span><div class="kiosk-tools"><label class="language-picker"><span class="sr-only" data-i18n="language"></span><select id="language-select">${languages.map((v) => `<option value="${v.id}">${v.flag} ${v.label}</option>`).join('')}</select></label><button id="view-settings-toggle" aria-expanded="false" aria-controls="view-settings">${icon('type')}<span data-i18n="view"></span></button><button data-pref="read" aria-pressed="false">${icon('volume')}<span data-i18n="read"></span></button></div></header><section class="kiosk-view-settings" id="view-settings" hidden aria-label="${e(t('view'))}"><div class="view-settings-heading"><strong data-i18n="view"></strong><button class="icon-btn" id="close-settings" data-label="close">${icon('close')}</button></div>${sizeControl('text', .9, 1.6)}${sizeControl('image', .75, 1.5)}<div class="view-settings-bottom"><button id="reset-sizes" data-i18n="reset"></button><button data-pref="contrast" aria-pressed="false" data-i18n="contrast"></button></div></section><div class="kiosk-layout"><section class="kiosk-selection"><h1 class="kiosk-menu-title" data-i18n="menuTitle"></h1><div class="assistant-box" id="assistant-box"><span class="assistant-avatar" aria-hidden="true">✳</span><p id="assistant-message" aria-live="polite" aria-atomic="true"></p><button id="repeat-message" class="icon-btn" data-label="repeat">${icon('volume')}</button></div><div class="category-tabs" role="group" aria-label="${e(t('all'))}"><button class="active" data-category="all" aria-pressed="true" data-i18n="all"></button><button data-category="coffee" aria-pressed="false" data-i18n="coffee"></button><button data-category="tea" aria-pressed="false" data-i18n="tea"></button><button data-category="dessert" aria-pressed="false" data-i18n="dessert"></button><button data-category="brunch" aria-pressed="false" data-i18n="brunch"></button><button id="recommend-menu" class="recommend-trigger" data-i18n="recommend"></button></div><div class="kiosk-menu" id="kiosk-menu" role="region" aria-label="${e(t('menuTitle'))}"></div><form class="composer" id="composer"><div class="voice-panel" id="voice-panel" data-phase="idle"><button type="button" class="voice-btn" id="voice-order"></button><div class="voice-body"><p id="voice-state" role="status"></p><div class="voice-wave" aria-hidden="true">${Array.from({ length: 16 }, () => '<i></i>').join('')}</div><div class="voice-caption" id="voice-caption" hidden><small data-i18n="heard"></small><p id="voice-heard"></p></div></div><button type="button" class="voice-keyboard-toggle" id="keyboard-toggle" data-label="keyboard" aria-expanded="false" aria-controls="keyboard-entry">${icon('keyboard')}<span data-i18n="keyboard"></span></button></div><div id="keyboard-entry" hidden><div class="composer-input-row"><label class="sr-only" for="order-text" data-i18n="inputLabel"></label><input id="order-text" maxlength="500" autocomplete="off" enterkeyhint="send"><button type="submit" id="send-order" class="send-btn" data-label="send">${icon('arrow')}</button></div></div><p class="composer-note" data-i18n="aiNote"></p><p class="sr-only" id="speech-note" role="status"></p></form></section><aside class="cart-panel" aria-labelledby="cart-heading"><div class="cart-panel-head"><h2 id="cart-heading" tabindex="-1"><span data-i18n="cart"></span><span id="cart-count">0</span></h2><button id="clear-cart" class="small-text-btn" data-i18n="clear"></button></div><div class="cart-lines" id="cart-lines"></div><div class="cart-summary"><div><span data-i18n="total"></span><strong id="cart-total"></strong></div><button id="review-order" class="btn btn-dark full-width" disabled><span data-i18n="review"></span>${icon('arrow')}</button><button id="request-help" class="help-button">${icon('help')}<span data-i18n="help"></span></button></div></aside></div></div></div><span class="device-brand" aria-hidden="true">OPEN KIOSK</span></div></section>`;
     paintLanguage(); preferences(); status(lastReply);
     const toggleSettings = (open) => { $('#view-settings').hidden = !open; $('#view-settings-toggle').setAttribute('aria-expanded', String(open)); };
     $('#view-settings-toggle').onclick = () => toggleSettings($('#view-settings').hidden);
@@ -353,7 +436,7 @@ export async function kioskPage(main) {
     for (const kind of ['text', 'image']) $(`#${kind}-scale-input`).oninput = (event) => applyUI({ [`${kind}_size`]: Number(event.target.value) }, false);
     main.addEventListener('click', (event) => {
       const pref = event.target.closest('[data-pref]');
-      if (pref) { prefs[pref.dataset.pref] = !prefs[pref.dataset.pref]; uiRevision++; preferences(); if (pref.dataset.pref === 'read') { if (prefs.read) speak(lastReply); else if ('speechSynthesis' in window) speechSynthesis.cancel(); } return; }
+      if (pref) { prefs[pref.dataset.pref] = !prefs[pref.dataset.pref]; uiRevision++; preferences(); if (pref.dataset.pref === 'read') { if (prefs.read) speak(lastReply); else { cancelSpeech(); refreshHandsFree(); } } return; }
       const size = event.target.closest('[data-size]');
       if (size) return applyUI({ [`${size.dataset.size}_delta`]: Number(size.dataset.delta) });
       const cat = event.target.closest('[data-category]');
@@ -374,8 +457,15 @@ export async function kioskPage(main) {
     $('#recommend-menu').onclick = openRecommendationPrompt;
     $('#composer').onsubmit = (event) => { event.preventDefault(); submitText(); };
     $('#voice-order').onclick = voice; $('#repeat-message').onclick = () => speak(lastReply, true); $('#review-order').onclick = reviewOrder;
-    $('#clear-cart').onclick = () => { if (!state.cart.length || busy) return; const d = modal(`<div class="modal-heading"><h2>${e(t('clearTitle'))}</h2></div><button class="btn btn-dark full-width" id="clear-confirm">${e(t('clearConfirm'))}</button>`); $('#clear-confirm', d).onclick = () => { d.close(); change({ type: 'clear' }); }; };
+    $('#clear-cart').onclick = () => { if (!state.cart.length || busy) return; const d = modal(`<div class="modal-heading"><h2>${e(t('clearTitle'))}</h2></div><button class="btn btn-dark full-width" id="clear-confirm">${e(t('clearConfirm'))}</button>`); $('#clear-confirm', d).onclick = () => { d.close(); change({ type: 'clear' }); }; dialogActions.set(d, { accept: () => $('#clear-confirm', d).click() }); status(t('clearTitle')); refreshHandsFree(); };
     $('#request-help').onclick = async (event) => { const button = event.currentTarget; button.disabled = true; try { await api('/api/kiosk/help', { method: 'POST', body: {} }); if (alive) status(t('helpDemo')); } catch (err) { await fail(err); } finally { if (alive) button.disabled = false; } };
+    document.addEventListener('visibilitychange', () => { if (document.hidden) { cancelSpeech(); handsFree?.pause(); } refreshHandsFree(); }, { signal: controller.signal });
+    document.addEventListener('keydown', (event) => {
+      if (!event.altKey || event.ctrlKey || event.metaKey) return;
+      const key = event.key.toLowerCase(); if (!['m', 'r', 'o'].includes(key)) return; event.preventDefault();
+      if (key === 'm') voice(); else if (key === 'r') speak(lastReply, true); else if (!$('dialog[open]')) reviewOrder();
+    }, { signal: controller.signal });
+    if (!demoMode) openEntry();
   } catch (err) { main.innerHTML = errorPanel(err.message); }
-  return () => { alive = false; demoCancel(); levelStop(); controller.abort(); clearTimeout(recordTimer); if (recording) { recording.aborted = true; stopRecording(); recording.stream.getTracks().forEach((v) => v.stop()); } if ('speechSynthesis' in window) speechSynthesis.cancel(); $$('.kiosk-modal').forEach((d) => d.close()); };
+  return () => { alive = false; cancelSpeech(); handsFree?.stop(); handsFree = null; turns = []; demoCancel(); levelStop(); controller.abort(); if ('speechSynthesis' in window) speechSynthesis.cancel(); $$('.kiosk-modal').forEach((d) => d.close()); };
 }

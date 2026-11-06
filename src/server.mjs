@@ -8,7 +8,7 @@ import { randomBytes, createHash } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { catalog, plans, presets } from './catalog.mjs';
 import { AppError, applyOperations, pricedCart } from './cart.mjs';
-import { interpret, transcribe } from './ai.mjs';
+import { interpret, transcribe, synthesize } from './ai.mjs';
 import { validateRecommendations } from './recommendations.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -20,6 +20,7 @@ await mkdir(dataDir, { recursive: true, mode: 0o700 });
 await chmod(dataDir, 0o700);
 const dbPath = join(dataDir, 'open-kiosk.sqlite');
 const db = new DatabaseSync(dbPath);
+const speechCache = new Map();
 await chmod(dbPath, 0o600);
 db.exec(`PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;
   CREATE TABLE IF NOT EXISTS stores(id TEXT PRIMARY KEY, name TEXT NOT NULL, plan TEXT NOT NULL DEFAULT 'trial', created INTEGER NOT NULL);
@@ -244,7 +245,7 @@ async function handle(req, res) {
         const row = kiosk(req); const body = await readBody(req); checkRevision(row, body.revision);
         if (typeof body.text !== 'string' || !body.text.trim() || body.text.length > 500) throw new AppError(400, '주문을 500자 이내로 입력해 주세요.');
         reserveAI(req, row);
-        const result = await interpret({ key, model: aiModel, text: body.text, cart: JSON.parse(row.cart), products: productsFor(row.store_id), language: body.language });
+        const result = await interpret({ key, model: aiModel, text: body.text, cart: JSON.parse(row.cart), products: productsFor(row.store_id), language: body.language, context: body.context });
         const fresh = kiosk(req); checkRevision(fresh, body.revision);
         const products = productsFor(fresh.store_id);
         const recommendations = validateRecommendations(result.recommendations, products, { text: body.text, language: body.language });
@@ -252,6 +253,20 @@ async function handle(req, res) {
         const updated = result.operations.length ? updateCart(fresh, next, body.revision) : fresh;
         db.prepare('UPDATE usage SET tokens=tokens+? WHERE day=?').run(result.usage, day());
         return json(res, 200, { ...state(updated), reply: result.reply, navigation: result.navigation, recommendations, presentation: result.presentation, review: result.review && next.length > 0, changed: result.operations.length > 0, source: 'openai' });
+      }
+      if (method === 'POST' && path === '/api/kiosk/speak') {
+        const row = kiosk(req), body = await readBody(req);
+        if (typeof body.text !== 'string' || !body.text.trim() || body.text.length > 1200 || !['ko','en','ja','zh'].includes(body.language)) throw new AppError(400,'음성 안내 내용을 확인해 주세요.');
+        limit(`speech:${row.token_hash}`,60,3600000);
+        const cacheKey = hash(body.language + ':' + body.text); const cached = speechCache.get(cacheKey);
+        let bytes = cached?.expires > now() ? cached.bytes : null;
+        if (!bytes) {
+          reserveAI(req,row); bytes = await synthesize({key,model:env.OPENAI_SPEECH_MODEL || 'gpt-4o-mini-tts',text:body.text,language:body.language});
+          if (speechCache.size >= 16) speechCache.delete(speechCache.keys().next().value);
+          speechCache.set(cacheKey,{bytes,expires:now()+300000});
+          setTimeout(() => { if (speechCache.get(cacheKey)?.expires <= now()) speechCache.delete(cacheKey); },300001).unref();
+        }
+        res.writeHead(200,{'Content-Type':'audio/mpeg','Content-Length':bytes.length,'Cache-Control':'no-store'}); return res.end(bytes);
       }
       if (method === 'POST' && path === '/api/kiosk/transcribe') {
         const row = kiosk(req);
