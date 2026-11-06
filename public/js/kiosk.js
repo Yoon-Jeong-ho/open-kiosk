@@ -8,7 +8,7 @@ import { utteranceLanguage, conversationCommand, dialogCommand, recentTurns, can
 
 export async function kioskPage(main) {
   let alive = true, busy = false, state, category = 'all', menuRevision = 0, micPending = false, uiRevision = 0;
-  let handsFree, voicePaused = false, speaking = false, speechVersion = 0, speechTimer, speechStartTimer, speechUtterance, guidanceAbort, guidanceAudio, guidanceUrl, speechResumeTimer, speechDialog, resumeAfter = 0, turns = [], failures = 0, entryRead = true;
+  let handsFree, voicePaused = false, speaking = false, speechVersion = 0, speechTimer, speechStartTimer, speechUtterance, guidanceAbort, guidanceAudio, guidanceUrl, speechResumeTimer, speechDialog, resumeAfter = 0, turns = [], failures = 0;
   const dialogActions = new WeakMap();
   const controller = new AbortController();
   const params = new URLSearchParams(location.search);
@@ -20,8 +20,8 @@ export async function kioskPage(main) {
     { url: '/media/menu-sample-03.mp3', label: '03  예산에 맞는 추천' },
   ] : ['글자·그림 키우기', '아이스 두 잔 주문', '한 잔만 따뜻하게', '차가운 잔에 시럽'].map((label, i) => ({ url: `/media/voice-sample-0${i + 1}.mp3`, label: `0${i + 1}  ${label}` }));
   let voicePhase = 'idle', heardText = '', levelStop = () => {}, demoAudio, demoCancel = () => {}, demoIndex = 0, demoPlaying = false, demoRunning = false;
-  let prefs = normalizePreferences();
-  if (!demoMode) try { prefs = normalizePreferences(JSON.parse(localStorage.getItem('ok_preferences') || '{}')); } catch {}
+  let prefs = normalizePreferences({ read: !demoMode });
+  if (!demoMode) try { prefs = normalizePreferences({ read: true, ...JSON.parse(localStorage.getItem('ok_preferences') || '{}') }); } catch {}
   const t = (key, values) => tr(prefs.language, key, values);
   const name = (p) => productName(p, prefs.language);
   const money = (n) => priceText(n, prefs.language);
@@ -83,7 +83,7 @@ export async function kioskPage(main) {
   const positionDialog = (d) => {
     const screen = $('.device-screen'); if (!screen) return;
     const r = screen.getBoundingClientRect();
-    Object.assign(d.style, { left: `${r.left + r.width / 2}px`, top: `${r.top + r.height / 2}px`, margin: '0', transform: 'translate(-50%,-50%)', maxHeight: `${r.height - 28}px`, width: `${Math.min(d.classList.contains('entry-modal') ? 560 : 440, r.width - 28)}px` });
+    Object.assign(d.style, { left: `${r.left + r.width / 2}px`, top: `${r.top + r.height / 2}px`, margin: '0', transform: 'translate(-50%,-50%)', maxHeight: `${r.height - 28}px`, width: `${Math.min(440, r.width - 28)}px` });
     d.style.setProperty('--text-scale', prefs.textScale);
     d.style.setProperty('--image-scale', prefs.imageScale);
   };
@@ -159,8 +159,8 @@ export async function kioskPage(main) {
   };
   const acceptState = (next) => { const changed = JSON.stringify(state.products) !== JSON.stringify(next.products); state = next; if (changed) paintMenu(); paintCart(); };
   const setBusy = (value) => {
-    busy = value; $('#send-order').disabled = value || micPending; $('#voice-order').disabled = (!handsFree && value) || micPending || demoRunning;
-    $('#order-text').disabled = value || micPending;
+    busy = value; $('#send-order').disabled = value; $('#voice-order').disabled = (!handsFree && value) || micPending || demoRunning;
+    $('#order-text').disabled = value;
     if ($('#demo-voice-next')) $('#demo-voice-next').disabled = value || micPending || demoRunning || demoIndex >= demoSamples.length;
     if ($('#demo-run-all')) $('#demo-run-all').disabled = value || micPending || demoRunning;
     $('#composer').setAttribute('aria-busy', String(value));
@@ -243,7 +243,7 @@ export async function kioskPage(main) {
         acceptState(await api('/api/kiosk/state')); d.close();
         const success = modal(`<div class="success-order"><span class="success-seal">${icon('check')}</span><h2>${e(t('doneTitle'))}</h2><span class="order-ticket"><small>${e(t('orderNumber'))}</small><strong>${String(result.order.number).padStart(3, '0')}</strong><span>${e(review.store.name)}</span></span><p class="form-footnote">${e(money(result.order.total))} · ${e(t('demo'))}</p><button class="btn btn-dark full-width" id="new-order">${e(t('newOrder'))} ${icon('arrow')}</button></div>`);
         turns = []; voicePaused = true; handsFree?.stop(); handsFree = null;
-        $('#new-order', success).onclick = () => { success.close(); openEntry(); }; status(t('orderReceived', { number: result.order.number }));
+        $('#new-order', success).onclick = () => { success.close(); startVoice(); }; status(t('orderReceived', { number: result.order.number }));
       } catch (err) {
         if (d.isConnected) { $('#confirm-error', d).textContent = prefs.language === 'ko' ? err.message : t('errorStale'); btn.disabled = false; }
         await fail(err); if (err.status === 409 && d.isConnected) { btn.disabled = true; $('#return-to-order', d).focus(); }
@@ -288,7 +288,7 @@ export async function kioskPage(main) {
     else if (next.review) { setBusy(false); reviewOrder(); }
   };
   const submitText = async () => {
-    const input = $('#order-text'); const text = input.value.trim(); if (!text || busy || micPending) return;
+    const input = $('#order-text'); const text = input.value.trim(); if (!text || busy) return;
     setBusy(true);
     try { await interpretRequest(text); if (alive) input.value = ''; }
     catch (err) { await fail(err); }
@@ -297,7 +297,7 @@ export async function kioskPage(main) {
   const paintVoice = (phase = voicePhase) => {
     voicePhase = phase; const panel = $('#voice-panel'); if (!alive || !panel) return;
     panel.dataset.phase = phase;
-    const keys = { idle: 'voiceHint', waiting: 'autoListening', paused: 'voicePaused', speaking: 'speaking', listening: 'voiceListening', sample: 'demoVoice', transcribing: 'transcribing', applying: 'voiceApplying', done: 'voiceDone', error: 'voiceError' };
+    const keys = { idle: 'voiceHint', permission: 'preparingMic', waiting: 'autoListening', paused: 'voicePaused', speaking: 'speaking', listening: 'voiceListening', sample: 'demoVoice', transcribing: 'transcribing', applying: 'voiceApplying', done: 'voiceDone', error: 'voiceError' };
     $('#voice-state').textContent = t(keys[phase] || 'voiceHint');
     $('#voice-heard').textContent = heardText; $('#voice-caption').hidden = !heardText;
     const b = $('#voice-order'); b.classList.toggle('recording', phase === 'listening');
@@ -341,44 +341,34 @@ export async function kioskPage(main) {
   };
   const voice = () => {
     if (handsFree) { voicePaused = !voicePaused; cancelSpeech(); refreshHandsFree(); if (voicePaused) status(t('voicePaused')); return; }
-    if (busy) return; openEntry();
+    if (busy || micPending) return; startVoice();
   };
   const orderDescription = (order) => order.cart.length ? order.cart.map((line) => `${name(line)} ${temperature(line.temperature)} ${countText(line.quantity, line)}${line.addons?.length ? ', ' + addonText(line) : ''}`).join('. ') + `. ${t('total')} ${money(order.total)}` : t('empty');
   const refreshHandsFree = () => {
     if (!alive) return;
-    if (!handsFree) { if (!demoMode && !busy && !speaking) paintVoice('idle'); return; }
+    if (!handsFree) { if (!demoMode && !busy && !speaking && !micPending) paintVoice(voicePhase === 'error' ? 'error' : 'idle'); return; }
     const open = $('dialog[open]');
     if (voicePaused || document.hidden || !handsFree.isActive()) { handsFree.pause(); paintVoice('paused'); }
     else if (!canListen({ busy: busy || micPending, speaking, dialogAllowed: !open || dialogActions.has(open), resumeAfter })) { handsFree.pause(); if (speaking) paintVoice('speaking'); }
     else { handsFree.resume(); paintVoice('waiting'); }
   };
-  const openEntry = () => {
-    if (!alive || demoMode || $('dialog[open]')) return;
-    cancelSpeech(); handsFree?.stop(); handsFree = null; voicePaused = false;
-    const d = modal(`<div class="entry-content"><div class="entry-icon" aria-hidden="true">${icon('mic')}${icon('grid')}</div><div class="modal-heading"><h2>${e(t('entryTitle'))}</h2><p>${e(t('entryHint'))}</p></div><div class="entry-languages" role="group" aria-label="${e(t('language'))}">${languages.map((language) => `<button type="button" lang="${language.id}" data-entry-language="${language.id}" aria-pressed="${language.id === prefs.language}"><span aria-hidden="true">${language.flag}</span> ${language.label}</button>`).join('')}</div><label class="entry-read"><input type="checkbox" id="entry-read" ${entryRead ? 'checked' : ''}><span>${e(t('entryRead'))}</span></label><p class="entry-reader-hint">${e(t('entryReadHint'))}</p><p class="entry-notice">${e(t('entryAudioNotice'))}</p><p id="entry-error" class="form-error" role="alert"></p></div><div class="entry-actions"><button id="entry-voice" class="btn btn-dark full-width">${e(t('startTogether'))}</button><button id="entry-touch" class="btn btn-plain full-width">${e(t('startTouch'))}</button></div><p class="entry-shortcuts sr-only">${e(t('keyboardHelp'))}</p>`, 'entry-modal');
-    // This essential preparation dialog stays open until an explicit start choice.
-    $('.modal-close', d).hidden = true;
-    d.addEventListener('cancel', (event) => event.preventDefault());
-    $$('[data-entry-language]', d).forEach((button) => button.onclick = () => { entryRead = $('#entry-read', d).checked; applyUI({ language: button.dataset.entryLanguage }, false); d.close(); openEntry(); });
-    $('#entry-touch', d).onclick = () => { prefs.read = $('#entry-read', d).checked; preferences(); d.close(); status(t('initial')); };
-    $('#entry-voice', d).onclick = async () => {
-      if (micPending) return;
-      prefs.read = $('#entry-read', d).checked; preferences(); micPending = true;
-      $('#entry-voice', d).disabled = true; $('#entry-voice', d).textContent = t('preparingMic'); $('#entry-error', d).textContent = '';
-      try {
-        const opened = await openHandsFree({
-          onStart: () => { if (alive) { heardText = ''; paintVoice('listening'); } },
-          onIdle: () => { if (alive) refreshHandsFree(); },
-          onAudio: (audio) => { if (alive && !voicePaused && !busy && !document.hidden) processAudio(audio); },
-          onLevel: (level) => { if (alive) $$('.voice-wave i').forEach((bar, i) => bar.style.setProperty('--level', Math.max(.12, level * (i % 3 === 1 ? .7 : 1)))); },
-          onError: () => { if (alive) { voicePaused = true; handsFree?.stop(); handsFree = null; status(t('micLost'), true); paintVoice('error'); } },
-        });
-        if (!alive || !d.isConnected) { opened.stop(); return; }
-        handsFree = opened; voicePaused = false; failures = 0; micPending = false; d.close();
-        status(t('voiceIntro')); refreshHandsFree();
-      } catch { if (alive && d.isConnected) { $('#entry-error', d).textContent = t('micFailed'); $('#entry-voice', d).disabled = false; $('#entry-voice', d).textContent = t('startTogether'); $('#entry-touch', d).focus(); } }
-      finally { micPending = false; if (alive) { $('#voice-order').disabled = busy && !handsFree; refreshHandsFree(); } }
-    };
+  const startVoice = async () => {
+    if (!alive || demoMode || micPending || handsFree) return;
+    micPending = true; $('#voice-order').disabled = true; paintVoice('permission');
+    try {
+      const opened = await openHandsFree({
+        onStart: () => { if (alive) { heardText = ''; paintVoice('listening'); } },
+        onIdle: () => { if (alive) refreshHandsFree(); },
+        onAudio: (audio) => { if (alive && !voicePaused && !busy && !document.hidden) processAudio(audio); },
+        onLevel: (level) => { if (alive) $$('.voice-wave i').forEach((bar, i) => bar.style.setProperty('--level', Math.max(.12, level * (i % 3 === 1 ? .7 : 1)))); },
+        onError: () => { if (alive) { voicePaused = true; handsFree?.stop(); handsFree = null; status(t('micLost'), true); paintVoice('error'); } },
+      });
+      if (!alive) { opened.stop(); return; }
+      handsFree = opened; voicePaused = false; failures = 0; micPending = false;
+      if (!busy && !$('dialog[open]') && !state.cart.length) status(t('voiceIntro'));
+      refreshHandsFree();
+    } catch { if (alive) { status(t('micFailed'), true); paintVoice('error'); } }
+    finally { micPending = false; if (alive) { $('#voice-order').disabled = busy && !handsFree; refreshHandsFree(); } }
   };
   const playDemoVoice = async () => {
     if (busy || demoIndex >= demoSamples.length) return;
@@ -426,8 +416,8 @@ export async function kioskPage(main) {
     state = await api('/api/kiosk/bootstrap', { method: 'POST', body: { store: new URLSearchParams(location.search).get('store') || 'demo' } });
     if (location.pathname !== '/kiosk') return;
     const sizeControl = (kind, min, max) => `<div class="size-control"><label for="${kind}-scale-input" data-i18n="${kind === 'text' ? 'textSize' : 'imageSize'}"></label><output id="${kind}-scale-value" for="${kind}-scale-input"></output><div><button data-size="${kind}" data-delta="-1" aria-label="${e(t(kind === 'text' ? 'textSize' : 'imageSize'))} ${e(t('smaller'))}">${icon('minus')}</button><input id="${kind}-scale-input" type="range" min="${min}" max="${max}" step=".05"><button data-size="${kind}" data-delta="1" aria-label="${e(t(kind === 'text' ? 'textSize' : 'imageSize'))} ${e(t('larger'))}">${icon('plus')}</button></div></div>`;
-    main.innerHTML = `<section class="kiosk-experience${demoMode ? ' voice-demo-mode' : ''}"><header class="experience-bar"><a class="experience-back" href="/">${icon('arrow')}<span data-i18n="siteBack"></span></a><span class="experience-title" data-i18n="experience"></span><span class="experience-demo" data-i18n="demo"></span><a href="/privacy" target="_blank" rel="noopener" class="experience-data" data-i18n="dataNotice"></a></header>${demoMode ? '<div class="voice-demo-toolbar"><span>합성 음성 시연 · 실제 음성 인식·주문 처리</span><div><button class="btn btn-dark btn-sm" id="demo-run-all">처음부터 연속 시연</button><button class="btn btn-outline btn-sm" id="demo-voice-next">01  글자·그림 키우기</button></div></div>' : ''}<div class="device-shell"><span class="device-camera" aria-hidden="true"></span><div class="device-screen"><div class="kiosk-app" aria-describedby="kiosk-shortcuts"><p class="sr-only" id="kiosk-shortcuts" data-i18n="keyboardHelp"></p><header class="kiosk-header"><span class="kiosk-store-name">${e(state.store.name)}</span><div class="kiosk-tools"><label class="language-picker"><span class="sr-only" data-i18n="language"></span><select id="language-select">${languages.map((v) => `<option value="${v.id}">${v.flag} ${v.label}</option>`).join('')}</select></label><button id="view-settings-toggle" aria-expanded="false" aria-controls="view-settings">${icon('type')}<span data-i18n="view"></span></button><button data-pref="read" aria-pressed="false">${icon('volume')}<span data-i18n="read"></span></button></div></header><section class="kiosk-view-settings" id="view-settings" hidden aria-label="${e(t('view'))}"><div class="view-settings-heading"><strong data-i18n="view"></strong><button class="icon-btn" id="close-settings" data-label="close">${icon('close')}</button></div>${sizeControl('text', .9, 1.6)}${sizeControl('image', .75, 1.5)}<div class="view-settings-bottom"><button id="reset-sizes" data-i18n="reset"></button><button data-pref="contrast" aria-pressed="false" data-i18n="contrast"></button></div></section><div class="kiosk-layout"><section class="kiosk-selection"><h1 class="kiosk-menu-title" data-i18n="menuTitle"></h1><div class="assistant-box" id="assistant-box"><span class="assistant-avatar" aria-hidden="true">✳</span><p id="assistant-message" aria-live="polite" aria-atomic="true"></p><button id="repeat-message" class="icon-btn" data-label="repeat">${icon('volume')}</button></div><div class="category-tabs" role="group" aria-label="${e(t('all'))}"><button class="active" data-category="all" aria-pressed="true" data-i18n="all"></button><button data-category="coffee" aria-pressed="false" data-i18n="coffee"></button><button data-category="tea" aria-pressed="false" data-i18n="tea"></button><button data-category="dessert" aria-pressed="false" data-i18n="dessert"></button><button data-category="brunch" aria-pressed="false" data-i18n="brunch"></button><button id="recommend-menu" class="recommend-trigger" data-i18n="recommend"></button></div><div class="kiosk-menu" id="kiosk-menu" role="region" aria-label="${e(t('menuTitle'))}"></div><form class="composer" id="composer"><div class="voice-panel" id="voice-panel" data-phase="idle"><button type="button" class="voice-btn" id="voice-order"></button><div class="voice-body"><p id="voice-state" role="status"></p><div class="voice-wave" aria-hidden="true">${Array.from({ length: 16 }, () => '<i></i>').join('')}</div><div class="voice-caption" id="voice-caption" hidden><small data-i18n="heard"></small><p id="voice-heard"></p></div></div><button type="button" class="voice-keyboard-toggle" id="keyboard-toggle" data-label="keyboard" aria-expanded="false" aria-controls="keyboard-entry">${icon('keyboard')}<span data-i18n="keyboard"></span></button></div><div id="keyboard-entry" hidden><div class="composer-input-row"><label class="sr-only" for="order-text" data-i18n="inputLabel"></label><input id="order-text" maxlength="500" autocomplete="off" enterkeyhint="send"><button type="submit" id="send-order" class="send-btn" data-label="send">${icon('arrow')}</button></div></div><p class="composer-note" data-i18n="aiNote"></p><p class="sr-only" id="speech-note" role="status"></p></form></section><aside class="cart-panel" aria-labelledby="cart-heading"><div class="cart-panel-head"><h2 id="cart-heading" tabindex="-1"><span data-i18n="cart"></span><span id="cart-count">0</span></h2><button id="clear-cart" class="small-text-btn" data-i18n="clear"></button></div><div class="cart-lines" id="cart-lines"></div><div class="cart-summary"><div><span data-i18n="total"></span><strong id="cart-total"></strong></div><button id="review-order" class="btn btn-dark full-width" disabled><span data-i18n="review"></span>${icon('arrow')}</button><button id="request-help" class="help-button">${icon('help')}<span data-i18n="help"></span></button></div></aside></div></div></div><span class="device-brand" aria-hidden="true">OPEN KIOSK</span></div></section>`;
-    paintLanguage(); preferences(); status(lastReply);
+    main.innerHTML = `<section class="kiosk-experience${demoMode ? ' voice-demo-mode' : ''}"><header class="experience-bar"><a class="experience-back" href="/">${icon('arrow')}<span data-i18n="siteBack"></span></a><span class="experience-title" data-i18n="experience"></span><span class="experience-demo" data-i18n="demo"></span><a href="/privacy" target="_blank" rel="noopener" class="experience-data" data-i18n="dataNotice"></a></header>${demoMode ? '<div class="voice-demo-toolbar"><span>합성 음성 시연 · 실제 음성 인식·주문 처리</span><div><button class="btn btn-dark btn-sm" id="demo-run-all">처음부터 연속 시연</button><button class="btn btn-outline btn-sm" id="demo-voice-next">01  글자·그림 키우기</button></div></div>' : ''}<div class="device-shell"><span class="device-camera" aria-hidden="true"></span><div class="device-screen"><div class="kiosk-app" aria-describedby="kiosk-shortcuts"><p class="sr-only" id="kiosk-shortcuts" data-i18n="keyboardHelp"></p><header class="kiosk-header"><span class="kiosk-store-name">${e(state.store.name)}</span><div class="kiosk-tools"><label class="language-picker"><span class="sr-only" data-i18n="language"></span><select id="language-select">${languages.map((v) => `<option value="${v.id}">${v.flag} ${v.label}</option>`).join('')}</select></label><button id="view-settings-toggle" aria-expanded="false" aria-controls="view-settings">${icon('type')}<span data-i18n="view"></span></button><button data-pref="read" aria-pressed="false">${icon('volume')}<span data-i18n="read"></span></button></div></header><section class="kiosk-view-settings" id="view-settings" hidden aria-label="${e(t('view'))}"><div class="view-settings-heading"><strong data-i18n="view"></strong><button class="icon-btn" id="close-settings" data-label="close">${icon('close')}</button></div>${sizeControl('text', .9, 1.6)}${sizeControl('image', .75, 1.5)}<div class="view-settings-bottom"><button id="reset-sizes" data-i18n="reset"></button><button data-pref="contrast" aria-pressed="false" data-i18n="contrast"></button></div></section><div class="kiosk-layout"><section class="kiosk-selection"><h1 class="kiosk-menu-title" data-i18n="menuTitle"></h1><div class="assistant-box" id="assistant-box"><span class="assistant-avatar" aria-hidden="true">✳</span><p id="assistant-message" aria-live="polite" aria-atomic="true"></p><button id="repeat-message" class="icon-btn" data-label="repeat">${icon('volume')}</button></div><div class="category-tabs" role="group" aria-label="${e(t('all'))}"><button class="active" data-category="all" aria-pressed="true" data-i18n="all"></button><button data-category="coffee" aria-pressed="false" data-i18n="coffee"></button><button data-category="tea" aria-pressed="false" data-i18n="tea"></button><button data-category="dessert" aria-pressed="false" data-i18n="dessert"></button><button data-category="brunch" aria-pressed="false" data-i18n="brunch"></button><button id="recommend-menu" class="recommend-trigger" data-i18n="recommend"></button></div><div class="kiosk-menu" id="kiosk-menu" role="region" aria-label="${e(t('menuTitle'))}"></div><form class="composer" id="composer"><div class="voice-panel" id="voice-panel" data-phase="idle"><button type="button" class="voice-btn" id="voice-order"></button><div class="voice-body"><p id="voice-state" role="status"></p><div class="voice-wave" aria-hidden="true">${Array.from({ length: 16 }, () => '<i></i>').join('')}</div><div class="voice-caption" id="voice-caption" hidden><small data-i18n="heard"></small><p id="voice-heard"></p></div></div><button type="button" class="voice-keyboard-toggle" id="keyboard-toggle" data-label="keyboard" aria-expanded="false" aria-controls="keyboard-entry">${icon('keyboard')}<span data-i18n="keyboard"></span></button></div><div id="keyboard-entry" hidden><div class="composer-input-row"><label class="sr-only" for="order-text" data-i18n="inputLabel"></label><input id="order-text" maxlength="500" autocomplete="off" enterkeyhint="send"><button type="submit" id="send-order" class="send-btn" data-label="send">${icon('arrow')}</button></div></div><p class="sr-only" id="speech-note" role="status"></p></form></section><aside class="cart-panel" aria-labelledby="cart-heading"><div class="cart-panel-head"><h2 id="cart-heading" tabindex="-1"><span data-i18n="cart"></span><span id="cart-count">0</span></h2><button id="clear-cart" class="small-text-btn" data-i18n="clear"></button></div><div class="cart-lines" id="cart-lines"></div><div class="cart-summary"><div><span data-i18n="total"></span><strong id="cart-total"></strong></div><button id="review-order" class="btn btn-dark full-width" disabled><span data-i18n="review"></span>${icon('arrow')}</button><button id="request-help" class="help-button">${icon('help')}<span data-i18n="help"></span></button></div></aside></div></div></div><span class="device-brand" aria-hidden="true">OPEN KIOSK</span></div></section>`;
+    paintLanguage(); preferences(); $('#assistant-message').textContent = lastReply;
     const toggleSettings = (open) => { $('#view-settings').hidden = !open; $('#view-settings-toggle').setAttribute('aria-expanded', String(open)); };
     $('#view-settings-toggle').onclick = () => toggleSettings($('#view-settings').hidden);
     $('#close-settings').onclick = () => { toggleSettings(false); $('#view-settings-toggle').focus(); };
@@ -465,7 +455,7 @@ export async function kioskPage(main) {
       const key = event.key.toLowerCase(); if (!['m', 'r', 'o'].includes(key)) return; event.preventDefault();
       if (key === 'm') voice(); else if (key === 'r') speak(lastReply, true); else if (!$('dialog[open]')) reviewOrder();
     }, { signal: controller.signal });
-    if (!demoMode) openEntry();
+    if (!demoMode) startVoice();
   } catch (err) { main.innerHTML = errorPanel(err.message); }
   return () => { alive = false; cancelSpeech(); handsFree?.stop(); handsFree = null; turns = []; demoCancel(); levelStop(); controller.abort(); if ('speechSynthesis' in window) speechSynthesis.cancel(); $$('.kiosk-modal').forEach((d) => d.close()); };
 }

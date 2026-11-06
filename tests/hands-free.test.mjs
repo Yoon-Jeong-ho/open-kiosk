@@ -94,10 +94,10 @@ test('microphone permission failure and stream shutdown release every audio reso
   try {
     globalThis.window={isSecureContext:true,AudioContext:Context,AudioWorkletNode:Worklet}; globalThis.AudioContext=Context; globalThis.AudioWorkletNode=Worklet;
     Object.defineProperty(globalThis,'navigator',{configurable:true,value:{mediaDevices:{getUserMedia:async()=>{throw new Error('denied');}}}});
-    await assert.rejects(openHandsFree({})); assert.equal(contextsClosed,1);
+    await assert.rejects(openHandsFree({})); assert.equal(contextsClosed,0);
     navigator.mediaDevices.getUserMedia=async()=>stream;
     const monitor=await openHandsFree({}); assert.equal(monitor.isActive(),true); monitor.resume(); monitor.pause(); monitor.stop(); monitor.stop();
-    assert.equal(contextsClosed,2); assert.equal(tracksStopped,1); assert.equal(disconnected,3); assert.equal(monitor.isActive(),false);
+    assert.equal(contextsClosed,1); assert.equal(tracksStopped,1); assert.equal(disconnected,3); assert.equal(monitor.isActive(),false);
   } finally {
     globalThis.window=oldWindow; globalThis.AudioContext=oldContext; globalThis.AudioWorkletNode=oldNode;
     if(oldNavigator) Object.defineProperty(globalThis,'navigator',oldNavigator); else delete globalThis.navigator;

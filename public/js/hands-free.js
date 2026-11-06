@@ -2,13 +2,13 @@ import { SpeechDetector } from './speech-detector.js';
 
 export async function openHandsFree({ onStart, onAudio, onIdle, onLevel = () => {}, onError = () => {} }) {
   if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia || !window.AudioContext || !window.AudioWorkletNode) throw new Error('mic_unavailable');
-  const context = new AudioContext();
-  let stream, source, processor, silent, stopped = false;
-  const stop = () => { if (stopped) return; stopped = true; detector?.pause(); processor?.port.close(); source?.disconnect(); processor?.disconnect(); silent?.disconnect(); stream?.getTracks().forEach((track) => track.stop()); context.close().catch(() => {}); };
+  let context, stream, source, processor, silent, stopped = false;
+  const stop = () => { if (stopped) return; stopped = true; detector?.pause(); processor?.port.close(); source?.disconnect(); processor?.disconnect(); silent?.disconnect(); stream?.getTracks().forEach((track) => track.stop()); context?.close().catch(() => {}); };
   let detector;
   try {
-    await context.resume();
     stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 } });
+    context = new AudioContext();
+    await context.resume();
     await context.audioWorklet.addModule('/js/speech-processor.js');
     detector = new SpeechDetector({ sampleRate: context.sampleRate, onStart, onAudio, onIdle });
     source = context.createMediaStreamSource(stream); processor = new AudioWorkletNode(context, 'kiosk-speech'); silent = context.createGain(); silent.gain.value = 0;

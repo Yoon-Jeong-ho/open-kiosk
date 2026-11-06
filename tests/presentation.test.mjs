@@ -39,7 +39,7 @@ test('invalid stored preferences are bounded and legacy large-mode preferences m
   assert.equal(value.language, 'ko'); assert.equal(value.textScale, 1.6); assert.equal(value.imageScale, .75);
 });
 test('all supported locales have menu names and essential ordering labels', () => {
-  for (const { id } of languages) for (const key of ['review', 'confirm', 'language', 'chooseTemp', 'textSize', 'imageSize', 'audioNotice', 'help']) assert.notEqual(tr(id, key), key);
+  for (const { id } of languages) for (const key of ['review', 'confirm', 'language', 'chooseTemp', 'textSize', 'imageSize', 'preparingMic', 'help']) assert.notEqual(tr(id, key), key);
   for (const { id } of languages) assert.ok(productName('americano', id).length > 2);
 });
 
