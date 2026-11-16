@@ -7,9 +7,12 @@ import { fileURLToPath } from 'node:url';
 import { randomBytes, createHash } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { catalog, plans, presets } from './catalog.mjs';
-import { AppError, applyOperations, pricedCart } from './cart.mjs';
-import { interpret, transcribe, synthesize } from './ai.mjs';
+import { AppError, applyOperations, cartForDisplay, pricedCart } from './cart.mjs';
+import { generateMerchantReport, interpret, transcribe, synthesize } from './ai.mjs';
 import { validateRecommendations } from './recommendations.mjs';
+import { checkRecommendationChoice, closeRecommendations, issueRecommendations, recordRecommendationAdd, recordRecommendationDisplay } from './recommendation-events.mjs';
+import { aggregateMerchantAnalytics, analyticsRange, evidenceFor } from './merchant-analytics.mjs';
+import { reportExample, reportExampleOptions } from './report-examples.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const env = { ...(existsSync(join(root, '.env')) ? parseEnv(readFileSync(join(root, '.env'), 'utf8')) : {}), ...process.env };
@@ -31,6 +34,20 @@ db.exec(`PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=50
   CREATE TABLE IF NOT EXISTS help_requests(id TEXT PRIMARY KEY, store_id TEXT NOT NULL, kiosk_hash TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'waiting', created INTEGER NOT NULL);
   CREATE TABLE IF NOT EXISTS receipts(id TEXT PRIMARY KEY, store_id TEXT NOT NULL, plan TEXT NOT NULL, amount INTEGER NOT NULL, created INTEGER NOT NULL);
   CREATE TABLE IF NOT EXISTS usage(day TEXT PRIMARY KEY, requests INTEGER NOT NULL DEFAULT 0, tokens INTEGER NOT NULL DEFAULT 0);
+  CREATE TABLE IF NOT EXISTS recommendation_events(
+    id TEXT PRIMARY KEY, store_id TEXT NOT NULL REFERENCES stores(id) ON DELETE CASCADE,
+    kiosk_hash TEXT NOT NULL, products TEXT NOT NULL, store_pick INTEGER NOT NULL, budget INTEGER,
+    issued_at INTEGER NOT NULL, shown_at INTEGER, added_at INTEGER, order_id TEXT REFERENCES orders(id) ON DELETE SET NULL,
+    closed INTEGER NOT NULL DEFAULT 0
+  );
+  CREATE INDEX IF NOT EXISTS recommendation_store_period ON recommendation_events(store_id,shown_at);
+  CREATE INDEX IF NOT EXISTS recommendation_kiosk ON recommendation_events(store_id,kiosk_hash,closed);
+  CREATE INDEX IF NOT EXISTS orders_store_period ON orders(store_id,created);
+  CREATE TABLE IF NOT EXISTS merchant_reports(
+    store_id TEXT NOT NULL REFERENCES stores(id) ON DELETE CASCADE,
+    period TEXT NOT NULL, fingerprint TEXT NOT NULL, report TEXT NOT NULL, created INTEGER NOT NULL,
+    PRIMARY KEY(store_id,period)
+  );
 `);
 if (!db.prepare('PRAGMA table_info(menu_overrides)').all().some(({ name }) => name === 'recommended')) {
   db.exec('ALTER TABLE menu_overrides ADD COLUMN recommended INTEGER NOT NULL DEFAULT 0 CHECK(recommended IN (0,1))');
@@ -107,7 +124,7 @@ function state(row) {
   const store = db.prepare('SELECT id,name,plan FROM stores WHERE id=?').get(row.store_id);
   if (!store) throw new AppError(404, '체험 매장이 종료됐어요.');
   const products = productsFor(row.store_id);
-  const cart = pricedCart(JSON.parse(row.cart), products);
+  const cart = pricedCart(cartForDisplay(JSON.parse(row.cart)), products);
   return { store, products, cart, revision: row.revision, total: cart.reduce((n, l) => n + l.subtotal, 0), count: cart.reduce((n, l) => n + l.quantity, 0), ai_available: !!key };
 }
 function checkRevision(row, revision) {
@@ -117,6 +134,20 @@ function updateCart(row, next, revision) {
   const result = db.prepare('UPDATE kiosks SET cart=?, revision=revision+1 WHERE token_hash=? AND revision=?').run(JSON.stringify(next), row.token_hash, revision);
   if (!result.changes) throw new AppError(409, '다른 입력으로 주문이 바뀌었어요. 최신 내용을 확인해 주세요.', 'stale_revision');
   return db.prepare('SELECT * FROM kiosks WHERE token_hash=?').get(row.token_hash);
+}
+function saveCartChange(row, next, operations, recommendationId) {
+  if (!recommendationId && !operations.some((op) => op.type === 'clear')) return updateCart(row, next, row.revision);
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    const updated = updateCart(row, next, row.revision);
+    if (recommendationId) recordRecommendationAdd(db, recommendationId, now());
+    else closeRecommendations(db, row);
+    db.exec('COMMIT');
+    return updated;
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
 }
 function reserveAI(req, row) {
   if (!key) throw new AppError(503, 'AI 연결이 준비 중이에요. 화면·키보드로 주문할 수 있어요.', 'ai_not_configured');
@@ -129,6 +160,26 @@ function reserveAI(req, row) {
   if (!result.changes) throw new AppError(429, '오늘의 AI 체험 한도에 도달했어요. 화면 주문을 이용해 주세요.', 'daily_limit');
 }
 function parseOrder(o) { return { ...o, lines: JSON.parse(o.lines) }; }
+
+function storeAnalytics(store, period) {
+  const at = now();
+  const { previousStart, end } = analyticsRange(period, at);
+  const orders = db.prepare(`
+    SELECT id,lines,total,created FROM orders WHERE store_id=? AND created>=? AND created<? ORDER BY created,id
+  `).all(store.id, previousStart, end).map(parseOrder);
+  const recommendations = db.prepare(`
+    SELECT products,store_pick,budget,shown_at,added_at,order_id FROM recommendation_events
+    WHERE store_id=? AND shown_at>=? AND shown_at<? ORDER BY shown_at,id
+  `).all(store.id, previousStart, end);
+  return aggregateMerchantAnalytics({ period, at, coverageStart: store.created, orders, recommendations });
+}
+
+function storedReport(storeId, period, fingerprint) {
+  const saved = db.prepare('SELECT report,created FROM merchant_reports WHERE store_id=? AND period=? AND fingerprint=?').get(storeId, period, fingerprint);
+  return saved ? { ...JSON.parse(saved.report), created: saved.created } : null;
+}
+
+const reportFingerprint = (analytics) => hash(JSON.stringify({ version: 2, analytics }));
 
 async function handle(req, res) {
   headers(res);
@@ -195,6 +246,45 @@ async function handle(req, res) {
         const help = db.prepare("SELECT id,status,created FROM help_requests WHERE store_id=? AND status='waiting' ORDER BY created DESC LIMIT 20").all(store.id);
         return json(res, 200, { store, orders, help, products: productsFor(store.id), kiosk_path: `/kiosk?store=${store.id}`, demo: true });
       }
+      if (method === 'GET' && path === '/api/merchant/analytics') {
+        const store = merchant(req);
+        const period = url.searchParams.get('period') || 'week';
+        const example = url.searchParams.get('example');
+        if (example) {
+          const preview = reportExample(example, period);
+          if (!preview) throw new AppError(404, '보고서 예시를 찾지 못했어요.');
+          return json(res, 200, { ...preview, example, examples: reportExampleOptions });
+        }
+        const analytics = storeAnalytics(store, period);
+        const report = storedReport(store.id, period, reportFingerprint(analytics));
+        return json(res, 200, { analytics, report, examples: reportExampleOptions, can_generate: !!key });
+      }
+      if (method === 'POST' && path === '/api/merchant/analytics/report') {
+        const store = merchant(req); const { period } = await readBody(req);
+        const analytics = storeAnalytics(store, period);
+        const fingerprint = reportFingerprint(analytics);
+        const cached = storedReport(store.id, period, fingerprint);
+        if (cached) return json(res, 200, { report: cached });
+        const evidence = evidenceFor(analytics);
+        if (!evidence.length) throw new AppError(409, '추천이나 체험 주문 기록을 만든 뒤 보고서를 생성해 주세요.', 'report_no_data');
+        if (!key) throw new AppError(503, 'AI 보고서 생성 연결을 사용할 수 없어요.', 'ai_not_configured');
+        reserveAI(req, { token_hash: `report:${store.id}` });
+        const result = await generateMerchantReport({
+          key, model: aiModel, evidence,
+          analytics: { ...analytics, combos: analytics.combos.slice(0, 8) },
+        });
+        db.prepare('UPDATE usage SET tokens=tokens+? WHERE day=?').run(result.usage, day());
+        merchant(req);
+        if (reportFingerprint(storeAnalytics(store, period)) !== fingerprint) {
+          throw new AppError(409, '새 기록이 들어왔어요. 집계를 새로고침하고 보고서를 생성해 주세요.', 'report_data_changed');
+        }
+        const created = now();
+        db.prepare(`
+          INSERT INTO merchant_reports(store_id,period,fingerprint,report,created) VALUES (?,?,?,?,?)
+          ON CONFLICT(store_id,period) DO UPDATE SET fingerprint=excluded.fingerprint,report=excluded.report,created=excluded.created
+        `).run(store.id, period, fingerprint, JSON.stringify(result.report), created);
+        return json(res, 201, { report: { ...result.report, created } });
+      }
       if (method === 'PATCH' && path === '/api/merchant/menu') {
         const store = merchant(req); const body = await readBody(req);
         const product = productsFor(store.id).find((p) => p.id === body.product_id);
@@ -247,22 +337,31 @@ async function handle(req, res) {
         return json(res, 201, state(db.prepare('SELECT * FROM kiosks WHERE token_hash=?').get(hash(token))));
       }
       if (method === 'GET' && path === '/api/kiosk/state') return json(res, 200, state(kiosk(req)));
+      if (method === 'POST' && path === '/api/kiosk/recommendations/shown') {
+        const row = kiosk(req); const body = await readBody(req);
+        recordRecommendationDisplay(db, row, body.ids, now());
+        return json(res, 200, { ok: true });
+      }
       if (method === 'POST' && path === '/api/kiosk/action') {
         const row = kiosk(req); const body = await readBody(req); checkRevision(row, body.revision);
-        const next = applyOperations(JSON.parse(row.cart), body.operations ?? [body.operation], productsFor(row.store_id));
-        const updated = updateCart(row, next, body.revision);
+        const operations = body.operations ?? [body.operation];
+        const products = productsFor(row.store_id);
+        const recommendationId = body.recommendation_id;
+        if (recommendationId !== undefined) checkRecommendationChoice(db, row, recommendationId, operations, products);
+        const next = applyOperations(JSON.parse(row.cart), operations, products, { recommendationId });
+        const updated = saveCartChange(row, next, operations, recommendationId);
         return json(res, 200, { ...state(updated), reply: next.length ? '주문 내용을 바꿨어요. 아래에서 확인해 주세요.' : '장바구니가 비었어요. 원하는 메뉴를 골라 주세요.' });
       }
       if (method === 'POST' && path === '/api/kiosk/interpret') {
         const row = kiosk(req); const body = await readBody(req); checkRevision(row, body.revision);
         if (typeof body.text !== 'string' || !body.text.trim() || body.text.length > 500) throw new AppError(400, '주문을 500자 이내로 입력해 주세요.');
         reserveAI(req, row);
-        const result = await interpret({ key, model: aiModel, text: body.text, cart: JSON.parse(row.cart), products: productsFor(row.store_id), language: body.language, context: body.context });
+        const result = await interpret({ key, model: aiModel, text: body.text, cart: cartForDisplay(JSON.parse(row.cart)), products: productsFor(row.store_id), language: body.language, context: body.context });
         const fresh = kiosk(req); checkRevision(fresh, body.revision);
         const products = productsFor(fresh.store_id);
-        const recommendations = validateRecommendations(result.recommendations, products, { text: body.text, language: body.language });
+        const recommendations = issueRecommendations(db, fresh, validateRecommendations(result.recommendations, products, { text: body.text, language: body.language }), now());
         const next = applyOperations(JSON.parse(fresh.cart), result.operations, products);
-        const updated = result.operations.length ? updateCart(fresh, next, body.revision) : fresh;
+        const updated = result.operations.length ? saveCartChange(fresh, next, result.operations) : fresh;
         db.prepare('UPDATE usage SET tokens=tokens+? WHERE day=?').run(result.usage, day());
         return json(res, 200, { ...state(updated), reply: result.reply, navigation: result.navigation, recommendations, presentation: result.presentation, review: result.review && next.length > 0, changed: result.operations.length > 0, source: 'openai' });
       }
@@ -303,6 +402,7 @@ async function handle(req, res) {
         db.exec('BEGIN IMMEDIATE');
         try {
           db.prepare('INSERT INTO orders(id,store_id,number,lines,total,kiosk_hash,revision,created) VALUES (?,?,?,?,?,?,?,?)').run(order.id, row.store_id, order.number, JSON.stringify(s.cart), s.total, row.token_hash, row.revision, now());
+          closeRecommendations(db, row, JSON.parse(row.cart), order.id);
           updateCart(row, [], body.revision); db.exec('COMMIT');
         } catch (e) { db.exec('ROLLBACK'); throw e; }
         return json(res, 201, { order, demo: true, charged: false });
@@ -357,6 +457,7 @@ const cleanup = setInterval(() => {
     db.prepare('DELETE FROM stores WHERE id=?').run(id);
   }
   db.prepare("DELETE FROM orders WHERE store_id='demo' AND created<?").run(now() - 86400000);
+  db.prepare("DELETE FROM recommendation_events WHERE (store_id='demo' OR shown_at IS NULL) AND issued_at<?").run(now() - 86400000);
   db.prepare("DELETE FROM help_requests WHERE store_id='demo' AND created<?").run(now() - 86400000);
 }, 3600000);
 cleanup.unref();

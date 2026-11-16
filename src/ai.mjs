@@ -97,6 +97,52 @@ text_delta/image_delta는 확대 1, 축소 -1, 변경 없음 0. 글씨만 요청
   return { ...intent, recommendations: recommendationRequested ? intent.recommendations : [], navigation: navigationForRequest(text, intent.navigation), presentation: presentationForRequest(text, intent.presentation), usage: result.usage?.total_tokens || 0 };
 }
 
+const merchantReportSchema = {
+  type: 'object', additionalProperties: false,
+  required: ['headline', 'observation', 'action', 'followup', 'evidence_id'],
+  properties: Object.fromEntries(['headline', 'observation', 'action', 'followup', 'evidence_id'].map((key) => [key, { type: 'string' }])),
+};
+
+export async function generateMerchantReport({ key, model, analytics, evidence }) {
+  const result = await provider('responses', key, {
+    model, store: false, max_output_tokens: 850,
+    instructions: `한국어로 소규모 카페 점주에게 짧은 운영 보고서를 작성한다. 제공된 집계만 사용한다. 주문 금액은 체험 주문액이다. 자료의 기간과 관찰 범위를 지킨다. 직전 기간 자료가 없거나 통계에 고객 특성, 원가, 재고가 없으면 추측하지 않는다. 단골, 신규 고객, 재방문, 할인 효과를 관찰한 것처럼 쓰지 않는다. 전환율은 관찰 결과이고 추천에 의한 증가로 주장하지 않는다.
+가장 관련 있는 evidence 하나를 골라 evidence_id로 돌려준다. 서버가 이 근거의 수치를 그대로 표시하므로 본문에 정확한 집계 수치를 반복하거나 숫자를 새로 계산하지 않는다. evidence의 small이 true이면 추가 관찰을 제안한다.
+headline은 짧은 제목이다. observation은 눈에 띈 사실 한 가지이며 추정 원인을 단정하지 않는다. action은 다음 주나 다음 달에 점주가 해볼 수 있는 변경 또는 관찰 한 가지다. followup은 다음에 확인할 지표다. 손님이 요청한 예산과 조건은 유지한다. 한국어로 각각 1~2문장 이내로 쓴다.`,
+    input: JSON.stringify({ analytics, evidence }),
+    text: { format: { type: 'json_schema', name: 'merchant_period_report', strict: true, schema: merchantReportSchema } },
+  });
+  const output = (result.output || []).flatMap((item) => item.content || []).filter((item) => item.type === 'output_text').map((item) => item.text).join('');
+  let report;
+  try { report = JSON.parse(output); } catch {}
+  const fact = evidence.find((item) => item.id === report?.evidence_id);
+  const fields = ['headline', 'observation', 'action', 'followup'];
+  if (result.status !== 'completed' || !fact || fields.some((field) => typeof report?.[field] !== 'string' || !report[field].trim())) {
+    throw new AppError(503, '보고서를 완성하지 못했어요. 잠시 뒤 다시 생성해 주세요.', 'ai_report_incomplete');
+  }
+  if (fact.small || fields.some((field) => /단골|재방문|신규\s*고객|고객\s*연령/.test(report[field]))) {
+    const review = fact.small ? {
+      headline: '비슷한 조건에서 기록을 더 모아 보세요',
+      observation: '지금 확인할 수 있는 사례가 적어 주문 한두 건에 집계가 크게 달라질 수 있어요.',
+    } : {
+      headline: '다음 집계에서도 같은 지표를 확인해 보세요',
+      observation: '아래 집계는 해당 기간에 체험 화면에서 관찰된 결과예요.',
+    };
+    return {
+      report: {
+        ...review, evidence: fact.detail,
+        action: '다음 주에도 비슷한 시간대에 같은 메뉴와 예산 조건으로 주문 흐름을 확인해 보세요.',
+        followup: '추천 안내 횟수와 확정 주문 건수를 함께 비교해 보세요.',
+      },
+      usage: result.usage?.total_tokens || 0,
+    };
+  }
+  return {
+    report: { ...Object.fromEntries(fields.map((field) => [field, report[field].trim().slice(0, 380)])), evidence: fact.detail },
+    usage: result.usage?.total_tokens || 0,
+  };
+}
+
 export async function transcribe({ key, model, bytes, type, language = 'ko' }) {
   const extensions = { 'audio/webm': 'webm', 'audio/mp4': 'mp4', 'audio/wav': 'wav', 'audio/mpeg': 'mp3' };
   const base = type.split(';')[0];

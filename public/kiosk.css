@@ -90,3 +90,7 @@
 
 /* Voice and touch share the menu from the first screen. */
 .voice-panel[data-phase=waiting]{border-color:#89a969}.voice-panel[data-phase=paused]{background:#f0f2ec}.voice-panel[data-phase=paused] .voice-btn{background:#64715d}.kiosk-modal h2:focus{outline:none}.kiosk-modal :focus-visible,.device-screen :focus-visible{outline:3px solid #526fbc;outline-offset:3px}
+
+.report-test-strip{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px 18px;padding:9px 14px;margin:8px auto 10px;width:min(1200px,calc(100% - 32px));border:1px solid #d7e2cd;border-radius:10px;background:#edf3e7;color:#304b36;font-size:13px}
+.report-test-strip b{margin-right:8px}
+.report-test-strip .btn{min-height:36px}

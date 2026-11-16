@@ -5,8 +5,9 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { once } from 'node:events';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
+import { issueRecommendations } from '../src/recommendation-events.mjs';
 
 let child; let tempDir; const port = 24000 + Math.floor(Math.random() * 12000); const base = `http://127.0.0.1:${port}`;
 function client() {
@@ -119,6 +120,76 @@ test('merchant recommendation preferences are validated, editable, and isolated 
   assert.deepEqual([hidden.price, hidden.available, hidden.recommended], [7000, false, true]);
   assert.equal(toast((await setMenu(owner, { recommended: false })).data).recommended, false);
   assert.equal(toast((await customer('/api/kiosk/state')).data).recommended, false);
+});
+test('merchant analytics attributes a recommendation only when all of its added units survive confirmation', async () => {
+  const owner = client();
+  const customer = client();
+  const other = client();
+  const a = await signup(owner);
+  await signup(other);
+  const start = await customer('/api/kiosk/bootstrap', 'POST', { store: a.store_id });
+  assert.equal(start.status, 201);
+  const token = /ok_kiosk=([a-f0-9]{64})/.exec(start.headers.get('set-cookie'))[1];
+  const kiosk = { store_id: a.store_id, token_hash: createHash('sha256').update(token).digest('hex') };
+  const event = () => {
+    const db = new DatabaseSync(join(tempDir, 'open-kiosk.sqlite'));
+    const [data] = issueRecommendations(db, kiosk, [{ product_ids: ['toast', 'americano'], store_recommended: true, budget: 10000 }], Date.now());
+    db.close();
+    return data.recommendation_id;
+  };
+  const report = () => owner('/api/merchant/analytics?period=week');
+  const shown = (ids) => customer('/api/kiosk/recommendations/shown', 'POST', { ids });
+  const coffee = { type: 'add', product_id: 'americano', quantity: 1, temperature: 'iced' };
+  const toast = { type: 'add', product_id: 'toast', quantity: 1 };
+  const change = (revision, operations, recommendation_id) => customer('/api/kiosk/action', 'POST', { revision, operations, recommendation_id });
+  const confirm = (state) => customer('/api/kiosk/confirm', 'POST', { revision: state.revision, total: state.total, confirmed: true });
+  assert.equal((await owner('/api/merchant/analytics/report', 'POST', { period: 'week' })).data.code, 'report_no_data');
+
+  const first = event();
+  assert.deepEqual((await report()).data.analytics.funnel, { shown: 0, added: 0, confirmed: 0 });
+  assert.equal((await shown([first, first])).status, 200);
+  assert.equal((await shown([first])).status, 200);
+  assert.equal((await change(0, [coffee], first)).status, 409);
+  const add = await change(0, [coffee, toast], first);
+  assert.equal(add.status, 200);
+  assert.equal(add.data.cart.some((line) => 'recommendation_ids' in line), false);
+  const merged = await change(add.data.revision, [coffee]);
+  const cup = merged.data.cart.find((line) => line.product_id === 'americano');
+  const split = await change(merged.data.revision, [{ type: 'split_temperature', line_id: cup.id, quantity: 1, temperature: 'hot' }]);
+  assert.equal((await confirm(split.data)).status, 201);
+  assert.equal((await confirm(split.data)).status, 200);
+
+  const second = event();
+  const withSecond = await change(split.data.revision + 1, [coffee, toast], second);
+  const toastLine = withSecond.data.cart.find((line) => line.product_id === 'toast');
+  const manual = await change(withSecond.data.revision, [{ type: 'remove', line_id: toastLine.id }, toast]);
+  assert.equal((await confirm(manual.data)).status, 201);
+  const live = (await report()).data.analytics;
+  assert.deepEqual(live.funnel, { shown: 2, added: 2, confirmed: 1 });
+  assert.deepEqual(live.totals, { orders: 2, amount: 22500, average: 11250 });
+  assert.equal(live.combos[0].name, '아메리카노 + 에그 토스트');
+  assert.equal((await other('/api/merchant/analytics')).data.analytics.funnel.shown, 0);
+  assert.equal((await owner('/api/merchant/analytics/report', 'POST', { period: 'week' })).data.code, 'ai_not_configured');
+});
+test('three report examples have reproducible counts and do not change store analytics', async () => {
+  const owner = client();
+  assert.equal((await owner('/api/merchant/analytics')).status, 401);
+  await signup(owner);
+  const checks = [['brunch', 80, 20, 12], ['dessert', 60, 24, 6], ['new-menu', 6, 2, 1]];
+  for (const [id, shown, added, confirmed] of checks) {
+    const sample = await owner(`/api/merchant/analytics?period=week&example=${id}`);
+    assert.equal(sample.status, 200);
+    assert.equal(sample.data.example, id);
+    assert.equal(sample.data.analytics.timeline.length, 7);
+    assert.equal(sample.data.analytics.timeline.reduce((n, day) => n + day.amount, 0), sample.data.analytics.totals.amount);
+    assert.deepEqual(sample.data.analytics.funnel, { shown, added, confirmed });
+    assert.match(sample.data.report.evidence, new RegExp(`안내 ${shown}회 · 담기 ${added}회 · 주문 포함 ${confirmed}회`));
+    assert.ok(sample.data.report.action.length > 10);
+  }
+  const monthly = (await owner('/api/merchant/analytics?period=month&example=brunch')).data.analytics;
+  assert.equal(monthly.timeline.length, 30);
+  assert.ok(monthly.previous && monthly.funnel.shown > 80);
+  assert.equal((await owner('/api/merchant/analytics?period=month')).data.analytics.totals.orders, 0);
 });
 test('unavailable AI is explicitly reported without changing the cart', async () => {
   const call = client(); const state = (await add(call, await bootstrap(call))).data;

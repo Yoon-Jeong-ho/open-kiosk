@@ -11,8 +11,22 @@ function checkedAddons(value, product) {
   return [...value].sort();
 }
 
+function splitLine(line, newQuantity, changes) {
+  line.quantity -= newQuantity;
+  const split = { ...line, ...changes, id: randomBytes(6).toString('hex'), quantity: newQuantity };
+  if (line.recommendation_ids) {
+    split.recommendation_ids = line.recommendation_ids.slice(line.quantity);
+    line.recommendation_ids = line.recommendation_ids.slice(0, line.quantity);
+  }
+  return split;
+}
+
+export function cartForDisplay(cart) {
+  return cart.map(({ recommendation_ids, ...line }) => line);
+}
+
 // The model and the browser use the same constrained operations. Neither supplies prices.
-export function applyOperations(previous, operations, products) {
+export function applyOperations(previous, operations, products, { recommendationId } = {}) {
   if (!Array.isArray(operations) || operations.length > 8) fail('한 번에 8개 이하의 변경을 요청해 주세요.');
   let cart = structuredClone(previous);
   const findProduct = (id) => {
@@ -35,7 +49,9 @@ export function applyOperations(previous, operations, products) {
       if (!quantity(q)) fail('수량은 1부터 20까지 선택할 수 있어요.');
       const temperature = p.temperatures.length ? (op.temperature ?? p.temperatures[0]) : null;
       if (p.temperatures.length ? !p.temperatures.includes(temperature) : op.temperature != null) fail('이 메뉴에서 선택할 수 없는 온도예요.');
-      cart.push({ id: randomBytes(6).toString('hex'), product_id: p.id, temperature, quantity: q, addons: checkedAddons(op.addons, p) });
+      const line = { id: randomBytes(6).toString('hex'), product_id: p.id, temperature, quantity: q, addons: checkedAddons(op.addons, p) };
+      if (recommendationId) line.recommendation_ids = [recommendationId];
+      cart.push(line);
     } else if (op.type === 'remove') {
       findLine(op.line_id);
       cart = cart.filter((line) => line.id !== op.line_id);
@@ -43,6 +59,7 @@ export function applyOperations(previous, operations, products) {
       const line = findLine(op.line_id);
       if (!quantity(op.quantity, 0)) fail('수량은 0부터 20까지 선택할 수 있어요.');
       line.quantity = op.quantity;
+      if (line.recommendation_ids) line.recommendation_ids = line.recommendation_ids.slice(0, line.quantity);
       cart = cart.filter((line) => line.quantity > 0);
     } else if (op.type === 'temperature' || op.type === 'split_temperature') {
       const line = findLine(op.line_id);
@@ -52,24 +69,24 @@ export function applyOperations(previous, operations, products) {
       else {
         if (!quantity(op.quantity) || op.quantity > line.quantity) fail('바꾸려는 잔 수를 확인해 주세요.');
         if (op.quantity === line.quantity) line.temperature = op.temperature;
-        else {
-          line.quantity -= op.quantity;
-          cart.push({ ...line, id: randomBytes(6).toString('hex'), quantity: op.quantity, temperature: op.temperature });
-        }
+        else cart.push(splitLine(line, op.quantity, { temperature: op.temperature }));
       }
     } else if (op.type === 'addons') {
       const line = findLine(op.line_id); const p = findProduct(line.product_id);
       const addons = checkedAddons(op.addons, p); const q = op.quantity ?? line.quantity;
       if (!quantity(q) || q > line.quantity) fail('옵션을 바꾸려는 잔 수를 확인해 주세요.');
       if (q === line.quantity) line.addons = addons;
-      else { line.quantity -= q; cart.push({ ...line, id: randomBytes(6).toString('hex'), quantity: q, addons }); }
+      else cart.push(splitLine(line, q, { addons }));
     } else fail('지원하지 않는 주문 변경이에요.');
   }
   const merged = [];
   for (const line of cart) {
     line.addons = checkedAddons(line.addons, findProduct(line.product_id));
     const same = merged.find((l) => l.product_id === line.product_id && l.temperature === line.temperature && JSON.stringify(l.addons) === JSON.stringify(line.addons));
-    if (same) same.quantity += line.quantity; else merged.push(line);
+    if (same) {
+      same.quantity += line.quantity;
+      if (line.recommendation_ids?.length) same.recommendation_ids = [...(same.recommendation_ids || []), ...line.recommendation_ids];
+    } else merged.push(line);
   }
   if (merged.reduce((n, l) => n + l.quantity, 0) > 20) fail('한 주문에서는 메뉴를 최대 20개까지 선택할 수 있어요.');
   return merged;

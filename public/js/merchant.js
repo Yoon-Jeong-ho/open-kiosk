@@ -1,4 +1,5 @@
 import { quantityText } from './locale.js';
+import { bindReports } from './reports.js';
 import { $, $$, api, e, won, icon, logo, toast, dialog, errorPanel, temp } from './ui.js';
 
 const chosenPlan = (config) => config.plans[new URLSearchParams(location.search).get('plan')] || config.plans.essential;
@@ -40,9 +41,9 @@ export async function checkout(config, navigate, main) {
 }
 
 export async function dashboard(config, navigate, main) {
-  let alive = true; let current; let timer;
-  const tab = ['orders', 'menu', 'subscription', 'settings'].includes(new URLSearchParams(location.search).get('tab')) ? new URLSearchParams(location.search).get('tab') : 'orders';
-  const title = { orders: '주문 관리', menu: '메뉴 관리', subscription: '구독 관리', settings: '체험 설정' }[tab];
+  let alive = true; let current; let timer; let cleanupReports;
+  const tab = ['orders', 'menu', 'reports', 'subscription', 'settings'].includes(new URLSearchParams(location.search).get('tab')) ? new URLSearchParams(location.search).get('tab') : 'orders';
+  const title = { orders: '주문 관리', menu: '메뉴 관리', reports: '판매 리포트', subscription: '구독 관리', settings: '체험 설정' }[tab];
   const renderOrders = (data) => {
     const orders = data.orders; const pending = orders.filter((o) => o.status !== 'completed');
     $('#dashboard-stats').innerHTML = `<article><span>표시된 체험 주문</span><strong>${orders.length}<small>건</small></strong><p>최근 최대 30건</p></article><article><span>준비 중인 주문</span><strong>${pending.length}<small>건</small></strong><p>전달 완료 전 주문</p></article><article><span>표시된 주문 금액</span><strong>${won(orders.reduce((n, o) => n + o.total, 0))}<small>원</small></strong><p>실제 결제·매출 아님</p></article>`;
@@ -54,7 +55,7 @@ export async function dashboard(config, navigate, main) {
     current = await api('/api/merchant/dashboard');
     if (location.pathname !== '/dashboard') return;
     const data = current;
-    main.innerHTML = `<div class="dashboard-layout"><aside class="dashboard-sidebar">${logo(true)}<div class="workspace-label">MY DEMO WORKSPACE</div><div class="workspace-store">${icon('store')}<div><b>${e(data.store.name)}</b><small>가상 매장 · 체험 계정</small></div></div><nav aria-label="운영 화면 메뉴">${[['orders', 'grid', '주문 관리'], ['menu', 'coffee', '메뉴 관리'], ['subscription', 'card', '구독 관리'], ['settings', 'settings', '체험 설정']].map(([t, i, label]) => `<a class="${tab === t ? 'active' : ''}" href="/dashboard?tab=${t}" ${tab === t ? 'aria-current="page"' : ''}>${icon(i)}${label}</a>`).join('')}</nav><div class="sidebar-bottom"><a href="/">${icon('arrow')} 서비스 사이트</a><button id="logout-btn">${icon('logout')} 체험 로그아웃</button><p>실제 매장과 연결되지 않은<br>프로젝트 운영 데모입니다.</p></div></aside><div class="dashboard-main"><header class="dashboard-topbar"><span>${icon('store')} ${e(data.store.name)}</span><span class="demo-tag">DEMO WORKSPACE</span></header><section class="dashboard-content"><div class="dashboard-heading"><div><div class="eyebrow">YOUR STORE, AT A GLANCE</div><h1>${title}</h1><p>${tab === 'orders' ? '내 매장의 주문과 도움 요청을 확인해요.' : tab === 'menu' ? '가격, 판매 상태, 추천 우선 메뉴를 설정해요.' : tab === 'subscription' ? '가상 구독 상태를 확인하고 요금제를 체험해요.' : '이 브라우저에 연결된 가상 매장을 관리해요.'}</p></div><a class="btn btn-dark" href="${e(data.kiosk_path)}" target="_blank" rel="noopener">내 매장 키오스크 ${icon('diagonal')}</a></div><div id="dashboard-body"></div></section></div></div>`;
+    main.innerHTML = `<div class="dashboard-layout"><aside class="dashboard-sidebar">${logo(true)}<div class="workspace-label">MY DEMO WORKSPACE</div><div class="workspace-store">${icon('store')}<div><b>${e(data.store.name)}</b><small>가상 매장 · 체험 계정</small></div></div><nav aria-label="운영 화면 메뉴">${[['orders', 'grid', '주문 관리'], ['menu', 'coffee', '메뉴 관리'], ['reports', 'grid', '판매 리포트'], ['subscription', 'card', '구독 관리'], ['settings', 'settings', '체험 설정']].map(([t, i, label]) => `<a class="${tab === t ? 'active' : ''}" href="/dashboard?tab=${t}" ${tab === t ? 'aria-current="page"' : ''}>${icon(i)}${label}</a>`).join('')}</nav><div class="sidebar-bottom"><a href="/">${icon('arrow')} 서비스 사이트</a><button id="logout-btn">${icon('logout')} 체험 로그아웃</button><p>실제 매장과 연결되지 않은<br>프로젝트 운영 데모입니다.</p></div></aside><div class="dashboard-main"><header class="dashboard-topbar"><span>${icon('store')} ${e(data.store.name)}</span><span class="demo-tag">DEMO WORKSPACE</span></header><section class="dashboard-content"><div class="dashboard-heading"><div><div class="eyebrow">YOUR STORE, AT A GLANCE</div><h1>${title}</h1><p>${tab === 'orders' ? '내 매장의 주문과 도움 요청을 확인해요.' : tab === 'menu' ? '가격, 판매 상태, 추천 우선 메뉴를 설정해요.' : tab === 'reports' ? '체험 주문과 추천 결과를 확인하고 다음 판매 계획을 세워요.' : tab === 'subscription' ? '가상 구독 상태를 확인하고 요금제를 체험해요.' : '이 브라우저에 연결된 가상 매장을 관리해요.'}</p></div><a class="btn btn-dark" href="${e(data.kiosk_path)}" target="_blank" rel="noopener">내 매장 키오스크 ${icon('diagonal')}</a></div><div id="dashboard-body"></div></section></div></div>`;
     $('#logout-btn').onclick = async () => { await api('/api/auth/logout', { method: 'POST', body: {} }); navigate('/'); };
     if (tab === 'orders') {
       $('#dashboard-body').innerHTML = `<div class="dashboard-stats" id="dashboard-stats"></div><div id="help-list"></div><div class="orders-heading"><h2>최근 주문</h2><div><span class="muted small">5초마다 자동 갱신</span><button id="refresh-orders" class="icon-btn" aria-label="주문 새로고침">${icon('refresh')}</button></div></div><div id="order-list" class="order-grid"></div>`;
@@ -110,6 +111,8 @@ export async function dashboard(config, navigate, main) {
           }
         };
       });
+    } else if (tab === 'reports') {
+      cleanupReports = bindReports($('#dashboard-body'), data.kiosk_path);
     } else if (tab === 'subscription') {
       const plan = config.plans[data.store.plan];
       $('#dashboard-body').innerHTML = `<article class="subscription-panel"><div class="subscription-icon">${icon('card')}</div><span class="demo-tag">가상 구독</span><h2>${plan ? e(plan.name) : '무료 체험 상태'}</h2><p>${plan ? `${won(plan.price)}원 / 월을 가정한 구독 데모입니다.` : '요금제를 선택하고 구독 과정을 체험해 보세요.'}</p><div class="subscription-zero"><span>실제 청구 금액</span><b>0원</b></div><div class="button-row"><a class="btn btn-dark" href="/pricing">${plan ? '요금제 변경 체험' : '요금제 체험하기'} ${icon('arrow')}</a>${plan ? '<button class="btn btn-outline" id="cancel-plan">가상 구독 해지</button>' : ''}</div><small>자동 갱신·실제 청구·환불 거래는 발생하지 않습니다.</small></article>`;
@@ -125,5 +128,5 @@ export async function dashboard(config, navigate, main) {
     if (err.status === 401) { main.innerHTML = `<section class="section-width account-empty"><span class="empty-symbol">${icon('store')}</span><h1>나의 매장을<br>만나볼 시간이에요.</h1><p>이 브라우저에 연결된 체험 계정이 없어요.<br>가상 매장을 골라 개인정보 없이 시작해 보세요.</p><a href="/signup" class="btn btn-dark btn-lg">체험 계정 만들기 ${icon('arrow')}</a></section>`; }
     else main.innerHTML = errorPanel(err.message);
   }
-  return () => { alive = false; clearInterval(timer); };
+  return () => { alive = false; clearInterval(timer); cleanupReports?.(); };
 }
