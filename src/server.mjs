@@ -22,17 +22,21 @@ const dbPath = join(dataDir, 'open-kiosk.sqlite');
 const db = new DatabaseSync(dbPath);
 const speechCache = new Map();
 await chmod(dbPath, 0o600);
-db.exec(`PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;
+db.exec(`PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000; BEGIN IMMEDIATE;
   CREATE TABLE IF NOT EXISTS stores(id TEXT PRIMARY KEY, name TEXT NOT NULL, plan TEXT NOT NULL DEFAULT 'trial', created INTEGER NOT NULL);
   CREATE TABLE IF NOT EXISTS operators(token_hash TEXT PRIMARY KEY, store_id TEXT NOT NULL, expires INTEGER NOT NULL);
   CREATE TABLE IF NOT EXISTS kiosks(token_hash TEXT PRIMARY KEY, store_id TEXT NOT NULL, cart TEXT NOT NULL DEFAULT '[]', revision INTEGER NOT NULL DEFAULT 0, expires INTEGER NOT NULL);
-  CREATE TABLE IF NOT EXISTS menu_overrides(store_id TEXT NOT NULL, product_id TEXT NOT NULL, available INTEGER NOT NULL DEFAULT 1, price INTEGER NOT NULL, PRIMARY KEY(store_id, product_id));
+  CREATE TABLE IF NOT EXISTS menu_overrides(store_id TEXT NOT NULL, product_id TEXT NOT NULL, available INTEGER NOT NULL DEFAULT 1, price INTEGER NOT NULL, recommended INTEGER NOT NULL DEFAULT 0 CHECK(recommended IN (0,1)), PRIMARY KEY(store_id, product_id));
   CREATE TABLE IF NOT EXISTS orders(id TEXT PRIMARY KEY, store_id TEXT NOT NULL, number INTEGER NOT NULL, lines TEXT NOT NULL, total INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'received', kiosk_hash TEXT NOT NULL, revision INTEGER NOT NULL, created INTEGER NOT NULL, UNIQUE(kiosk_hash,revision));
   CREATE TABLE IF NOT EXISTS help_requests(id TEXT PRIMARY KEY, store_id TEXT NOT NULL, kiosk_hash TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'waiting', created INTEGER NOT NULL);
   CREATE TABLE IF NOT EXISTS receipts(id TEXT PRIMARY KEY, store_id TEXT NOT NULL, plan TEXT NOT NULL, amount INTEGER NOT NULL, created INTEGER NOT NULL);
   CREATE TABLE IF NOT EXISTS usage(day TEXT PRIMARY KEY, requests INTEGER NOT NULL DEFAULT 0, tokens INTEGER NOT NULL DEFAULT 0);
 `);
+if (!db.prepare('PRAGMA table_info(menu_overrides)').all().some(({ name }) => name === 'recommended')) {
+  db.exec('ALTER TABLE menu_overrides ADD COLUMN recommended INTEGER NOT NULL DEFAULT 0 CHECK(recommended IN (0,1))');
+}
 db.prepare("INSERT OR IGNORE INTO stores(id,name,plan,created) VALUES ('demo','OPEN GARDEN','demo',?)").run(Date.now());
+db.exec('COMMIT');
 
 const now = () => Date.now();
 const uid = () => randomBytes(12).toString('hex');
@@ -82,7 +86,10 @@ async function readBody(req, max = 12000, raw = false) {
 }
 function productsFor(storeId) {
   const overrides = db.prepare('SELECT * FROM menu_overrides WHERE store_id=?').all(storeId);
-  return catalog.map((p) => { const o = overrides.find((o) => o.product_id === p.id); return { ...p, available: o ? !!o.available : true, price: o?.price ?? p.price }; });
+  return catalog.map((p) => {
+    const override = overrides.find((row) => row.product_id === p.id);
+    return { ...p, available: override ? !!override.available : true, price: override?.price ?? p.price, recommended: override?.recommended === 1 };
+  });
 }
 function merchant(req) {
   const token = cookieValue(req, 'ok_merchant');
@@ -190,11 +197,16 @@ async function handle(req, res) {
       }
       if (method === 'PATCH' && path === '/api/merchant/menu') {
         const store = merchant(req); const body = await readBody(req);
-        const p = catalog.find((p) => p.id === body.product_id);
-        if (!p || typeof body.available !== 'boolean') throw new AppError(400, '메뉴와 판매 상태를 확인해 주세요.');
-        const price = body.price ?? productsFor(store.id).find((x) => x.id === p.id).price;
+        const product = productsFor(store.id).find((p) => p.id === body.product_id);
+        if (!product || typeof body.available !== 'boolean') throw new AppError(400, '메뉴와 판매 상태를 확인해 주세요.');
+        if (body.recommended !== undefined && typeof body.recommended !== 'boolean') throw new AppError(400, '추천 우선 설정을 확인해 주세요.');
+        const price = body.price ?? product.price;
         if (!Number.isInteger(price) || price < 1000 || price > 50000) throw new AppError(400, '가격은 1,000원부터 50,000원 사이 정수로 입력해 주세요.');
-        db.prepare('INSERT INTO menu_overrides(store_id,product_id,available,price) VALUES (?,?,?,?) ON CONFLICT(store_id,product_id) DO UPDATE SET available=excluded.available,price=excluded.price').run(store.id, p.id, body.available ? 1 : 0, price);
+        const recommended = body.recommended ?? product.recommended;
+        db.prepare(`
+          INSERT INTO menu_overrides(store_id,product_id,available,price,recommended) VALUES (?,?,?,?,?)
+          ON CONFLICT(store_id,product_id) DO UPDATE SET available=excluded.available,price=excluded.price,recommended=excluded.recommended
+        `).run(store.id, product.id, Number(body.available), price, Number(recommended));
         return json(res, 200, { products: productsFor(store.id) });
       }
       if (method === 'PATCH' && path === '/api/merchant/order') {

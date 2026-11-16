@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { once } from 'node:events';
 import { randomUUID } from 'node:crypto';
+import { DatabaseSync } from 'node:sqlite';
 
 let child; let tempDir; const port = 24000 + Math.floor(Math.random() * 12000); const base = `http://127.0.0.1:${port}`;
 function client() {
@@ -23,6 +24,12 @@ const add = async (call, state) => call('/api/kiosk/action', 'POST', { revision:
 
 before(async () => {
   tempDir = await mkdtemp(join(tmpdir(), 'open-kiosk-test-'));
+  const oldDb = new DatabaseSync(join(tempDir, 'open-kiosk.sqlite'));
+  oldDb.exec(`
+    CREATE TABLE menu_overrides(store_id TEXT NOT NULL, product_id TEXT NOT NULL, available INTEGER NOT NULL DEFAULT 1, price INTEGER NOT NULL, PRIMARY KEY(store_id, product_id));
+    INSERT INTO menu_overrides(store_id,product_id,available,price) VALUES ('demo','lemon',0,4700);
+  `);
+  oldDb.close();
   child = spawn(process.execPath, ['src/server.mjs'], { env: { ...process.env, PORT: String(port), OPEN_KIOSK_AI_DISABLED: '1', OPEN_KIOSK_HOST: '127.0.0.1', OPEN_KIOSK_DATA_DIR: tempDir }, stdio: ['ignore', 'ignore', 'ignore'] });
   for (let i = 0; i < 80; i++) { try { if ((await fetch(base + '/api/health')).ok) return; } catch {} await new Promise((r) => setTimeout(r, 100)); }
   throw new Error('Test server did not start');
@@ -85,6 +92,33 @@ test('price and stock changes are rechecked at confirmation', async () => {
   assert.equal((await customer('/api/kiosk/confirm', 'POST', { revision: cart.revision, confirmed: true, total: cart.total })).status, 409);
   await owner('/api/merchant/menu', 'PATCH', { product_id: 'americano', available: false, price: 3900 });
   assert.equal((await customer('/api/kiosk/confirm', 'POST', { revision: cart.revision, confirmed: true, total: 7800 })).status, 409);
+});
+test('existing price and stock overrides survive the recommendation settings migration', async () => {
+  const { products } = await bootstrap(client());
+  const lemon = products.find((p) => p.id === 'lemon');
+  assert.deepEqual([lemon.price, lemon.available, lemon.recommended], [4700, false, false]);
+});
+test('merchant recommendation preferences are validated, editable, and isolated by store', async () => {
+  const owner = client();
+  const other = client();
+  const customer = client();
+  const { store_id } = await signup(owner);
+  await signup(other);
+  const setMenu = (call, fields) => call('/api/merchant/menu', 'PATCH', { product_id: 'toast', available: true, ...fields });
+  const toast = (data) => data.products.find((p) => p.id === 'toast');
+  await bootstrap(customer, store_id);
+
+  assert.equal((await setMenu(customer, { recommended: true })).status, 401);
+  assert.equal((await setMenu(owner, { recommended: 'true' })).status, 400);
+  assert.equal(toast((await setMenu(owner, { recommended: true })).data).recommended, true);
+  assert.equal(toast((await owner('/api/merchant/dashboard')).data).recommended, true);
+  assert.equal(toast((await customer('/api/kiosk/state')).data).recommended, true);
+  assert.equal(toast((await other('/api/merchant/dashboard')).data).recommended, false);
+
+  const hidden = toast((await setMenu(owner, { available: false, price: 7000 })).data);
+  assert.deepEqual([hidden.price, hidden.available, hidden.recommended], [7000, false, true]);
+  assert.equal(toast((await setMenu(owner, { recommended: false })).data).recommended, false);
+  assert.equal(toast((await customer('/api/kiosk/state')).data).recommended, false);
 });
 test('unavailable AI is explicitly reported without changing the cart', async () => {
   const call = client(); const state = (await add(call, await bootstrap(call))).data;

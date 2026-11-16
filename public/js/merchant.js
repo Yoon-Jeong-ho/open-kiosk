@@ -54,7 +54,7 @@ export async function dashboard(config, navigate, main) {
     current = await api('/api/merchant/dashboard');
     if (location.pathname !== '/dashboard') return;
     const data = current;
-    main.innerHTML = `<div class="dashboard-layout"><aside class="dashboard-sidebar">${logo(true)}<div class="workspace-label">MY DEMO WORKSPACE</div><div class="workspace-store">${icon('store')}<div><b>${e(data.store.name)}</b><small>가상 매장 · 체험 계정</small></div></div><nav aria-label="운영 화면 메뉴">${[['orders', 'grid', '주문 관리'], ['menu', 'coffee', '메뉴 관리'], ['subscription', 'card', '구독 관리'], ['settings', 'settings', '체험 설정']].map(([t, i, label]) => `<a class="${tab === t ? 'active' : ''}" href="/dashboard?tab=${t}" ${tab === t ? 'aria-current="page"' : ''}>${icon(i)}${label}</a>`).join('')}</nav><div class="sidebar-bottom"><a href="/">${icon('arrow')} 서비스 사이트</a><button id="logout-btn">${icon('logout')} 체험 로그아웃</button><p>실제 매장과 연결되지 않은<br>프로젝트 운영 데모입니다.</p></div></aside><div class="dashboard-main"><header class="dashboard-topbar"><span>${icon('store')} ${e(data.store.name)}</span><span class="demo-tag">DEMO WORKSPACE</span></header><section class="dashboard-content"><div class="dashboard-heading"><div><div class="eyebrow">YOUR STORE, AT A GLANCE</div><h1>${title}</h1><p>${tab === 'orders' ? '내 매장의 주문과 도움 요청을 확인해요.' : tab === 'menu' ? '내 매장 키오스크의 가격과 판매 상태를 바꿔요.' : tab === 'subscription' ? '가상 구독 상태를 확인하고 요금제를 체험해요.' : '이 브라우저에 연결된 가상 매장을 관리해요.'}</p></div><a class="btn btn-dark" href="${e(data.kiosk_path)}" target="_blank" rel="noopener">내 매장 키오스크 ${icon('diagonal')}</a></div><div id="dashboard-body"></div></section></div></div>`;
+    main.innerHTML = `<div class="dashboard-layout"><aside class="dashboard-sidebar">${logo(true)}<div class="workspace-label">MY DEMO WORKSPACE</div><div class="workspace-store">${icon('store')}<div><b>${e(data.store.name)}</b><small>가상 매장 · 체험 계정</small></div></div><nav aria-label="운영 화면 메뉴">${[['orders', 'grid', '주문 관리'], ['menu', 'coffee', '메뉴 관리'], ['subscription', 'card', '구독 관리'], ['settings', 'settings', '체험 설정']].map(([t, i, label]) => `<a class="${tab === t ? 'active' : ''}" href="/dashboard?tab=${t}" ${tab === t ? 'aria-current="page"' : ''}>${icon(i)}${label}</a>`).join('')}</nav><div class="sidebar-bottom"><a href="/">${icon('arrow')} 서비스 사이트</a><button id="logout-btn">${icon('logout')} 체험 로그아웃</button><p>실제 매장과 연결되지 않은<br>프로젝트 운영 데모입니다.</p></div></aside><div class="dashboard-main"><header class="dashboard-topbar"><span>${icon('store')} ${e(data.store.name)}</span><span class="demo-tag">DEMO WORKSPACE</span></header><section class="dashboard-content"><div class="dashboard-heading"><div><div class="eyebrow">YOUR STORE, AT A GLANCE</div><h1>${title}</h1><p>${tab === 'orders' ? '내 매장의 주문과 도움 요청을 확인해요.' : tab === 'menu' ? '가격, 판매 상태, 추천 우선 메뉴를 설정해요.' : tab === 'subscription' ? '가상 구독 상태를 확인하고 요금제를 체험해요.' : '이 브라우저에 연결된 가상 매장을 관리해요.'}</p></div><a class="btn btn-dark" href="${e(data.kiosk_path)}" target="_blank" rel="noopener">내 매장 키오스크 ${icon('diagonal')}</a></div><div id="dashboard-body"></div></section></div></div>`;
     $('#logout-btn').onclick = async () => { await api('/api/auth/logout', { method: 'POST', body: {} }); navigate('/'); };
     if (tab === 'orders') {
       $('#dashboard-body').innerHTML = `<div class="dashboard-stats" id="dashboard-stats"></div><div id="help-list"></div><div class="orders-heading"><h2>최근 주문</h2><div><span class="muted small">5초마다 자동 갱신</span><button id="refresh-orders" class="icon-btn" aria-label="주문 새로고침">${icon('refresh')}</button></div></div><div id="order-list" class="order-grid"></div>`;
@@ -70,8 +70,46 @@ export async function dashboard(config, navigate, main) {
       };
       timer = setInterval(() => { if (!document.hidden && !$('#order-list')?.contains(document.activeElement) && !$('#help-list')?.contains(document.activeElement)) load().catch(() => {}); }, 5000);
     } else if (tab === 'menu') {
-      $('#dashboard-body').innerHTML = `<div class="info-callout">${icon('refresh')} 저장한 가격과 판매 상태는 내 매장 키오스크의 다음 요청부터 반영됩니다. 이미 확정된 주문 금액은 유지됩니다.</div><div class="menu-management">${data.products.map((p) => `<form class="menu-management-row" data-menu-form="${e(p.id)}"><div class="menu-management-name"><span class="menu-initial">${e(p.name[0])}</span><div><b>${e(p.name)}</b><small>${e(p.en)}</small></div></div><label>가격 <span><input type="number" name="price" min="1000" max="50000" step="100" value="${p.price}" aria-label="${e(p.name)} 가격" required> 원</span></label><label class="availability-control"><input name="available" type="checkbox" ${p.available ? 'checked' : ''}><span>판매 중</span></label><button class="btn btn-outline btn-sm" type="submit">저장</button></form>`).join('')}</div>`;
-      $$('[data-menu-form]').forEach((form) => { form.onsubmit = async (event) => { event.preventDefault(); const button = $('button', form); button.disabled = true; const values = new FormData(form); try { await api('/api/merchant/menu', { method: 'PATCH', body: { product_id: form.dataset.menuForm, price: Number(values.get('price')), available: values.has('available') } }); toast('메뉴 설정을 저장했어요.'); } catch (err) { toast(err.message); } finally { button.disabled = false; } }; });
+      $('#dashboard-body').innerHTML = `
+        <div class="info-callout">${icon('refresh')} ‘추천 우선’을 켜고 저장하면, 손님이 추천을 요청했을 때 조건에 맞는 조합 중 이 메뉴가 포함된 조합을 먼저 보여줘요.</div>
+        <div class="menu-management">${data.products.map((p) => `
+          <form class="menu-management-row" data-menu-form="${e(p.id)}">
+            <div class="menu-management-name">
+              <span class="menu-initial">${e(p.name[0])}</span>
+              <div><b>${e(p.name)}</b><small>${e(p.en)}</small></div>
+            </div>
+            <label>가격 <span><input type="number" name="price" min="1000" max="50000" step="100" value="${p.price}" aria-label="${e(p.name)} 가격" required> 원</span></label>
+            <label class="availability-control"><input name="available" type="checkbox" aria-label="${e(p.name)} 판매 중" ${p.available ? 'checked' : ''}><span>판매 중</span></label>
+            <label class="availability-control">
+              <input class="recommendation-switch" name="recommended" type="checkbox" role="switch" aria-label="${e(p.name)} 추천 우선" ${p.recommended ? 'checked' : ''}>
+              <span>추천 우선</span>
+            </label>
+            <button class="btn btn-outline btn-sm" type="submit" aria-label="${e(p.name)} 설정 저장">저장</button>
+          </form>`).join('')}</div>`;
+      $$('[data-menu-form]').forEach((form) => {
+        form.onsubmit = async (event) => {
+          event.preventDefault();
+          const button = $('button', form);
+          const values = new FormData(form);
+          button.disabled = true;
+          try {
+            await api('/api/merchant/menu', {
+              method: 'PATCH',
+              body: {
+                product_id: form.dataset.menuForm,
+                price: Number(values.get('price')),
+                available: values.has('available'),
+                recommended: values.has('recommended'),
+              },
+            });
+            toast('메뉴 설정을 저장했어요.');
+          } catch (err) {
+            toast(err.message);
+          } finally {
+            button.disabled = false;
+          }
+        };
+      });
     } else if (tab === 'subscription') {
       const plan = config.plans[data.store.plan];
       $('#dashboard-body').innerHTML = `<article class="subscription-panel"><div class="subscription-icon">${icon('card')}</div><span class="demo-tag">가상 구독</span><h2>${plan ? e(plan.name) : '무료 체험 상태'}</h2><p>${plan ? `${won(plan.price)}원 / 월을 가정한 구독 데모입니다.` : '요금제를 선택하고 구독 과정을 체험해 보세요.'}</p><div class="subscription-zero"><span>실제 청구 금액</span><b>0원</b></div><div class="button-row"><a class="btn btn-dark" href="/pricing">${plan ? '요금제 변경 체험' : '요금제 체험하기'} ${icon('arrow')}</a>${plan ? '<button class="btn btn-outline" id="cancel-plan">가상 구독 해지</button>' : ''}</div><small>자동 갱신·실제 청구·환불 거래는 발생하지 않습니다.</small></article>`;

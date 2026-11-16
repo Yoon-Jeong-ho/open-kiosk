@@ -41,6 +41,7 @@ const messages = {
   recommendInput: ['원하는 메뉴와 예산', 'Preferences and budget', '好みと予算', '偏好与预算'], recommendPlaceholder: ['예: 커피와 식사를 만 원 안에서', 'E.g. coffee and brunch under ₩10,000', '例：コーヒーと食事を1万ウォン以内', '例如：咖啡加早午餐，不超过一万韩元'],
   recommendSubmit: ['추천 보기', 'Show suggestions', 'おすすめを見る', '查看推荐'], recommendResults: ['이런 메뉴 어때요?', 'How about these?', 'こちらはいかがですか？', '看看这些菜单吧'],
   recommendBasis: ['기본 메뉴 가격 기준이에요.', 'Based on base menu prices.', '基本メニュー価格でのおすすめです。', '以菜单基础价格为准。'],
+  storeRecommendation: ['매장 추천', 'Store pick', 'お店のおすすめ', '店家推荐'],
   chooseCombo: ['이 조합 고르기', 'Choose this set', 'この組み合わせを選ぶ', '选择这个组合'], addCombo: ['이 조합 담기 · {price}', 'Add this set · {price}', 'この組み合わせを追加 · {price}', '添加此组合 · {price}'],
   comboOptions: ['담기 전에 확인해 주세요', 'Check before adding', '追加前にご確認ください', '添加前请确认'],
   noRecommendations: ['조건에 맞는 추천을 찾지 못했어요. 예산이나 메뉴를 바꿔 말씀해 주세요.', 'No matching suggestions. Try another budget or preference.', '条件に合うおすすめが見つかりません。予算や好みを変えてください。', '没有符合条件的推荐，请调整预算或偏好。'],

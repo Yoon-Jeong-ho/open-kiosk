@@ -35,6 +35,40 @@ test('recommendations reject invented or sold-out products and ignore model-supp
   assert.equal(results.length,1); assert.equal(results[0].total,10000);
   assert.equal(validateRecommendations(proposals,menu.map((p)=>({...p,available:p.id!=='sandwich'}))).length,0);
 });
+test('eligible store picks rank first while all other options keep their order', () => {
+  const proposals = [
+    { product_ids: ['americano', 'sandwich'], reason: '커피와 브런치', store_recommended: true },
+    { product_ids: ['decaf', 'toast'], reason: '디카페인과 브런치' },
+    { product_ids: ['americano', 'toast'], reason: '커피와 브런치' },
+  ];
+  const options = { text: '커피랑 브런치 만 원 안에서 추천해줘' };
+  const regular = validateRecommendations(proposals, menu, options);
+  assert.deepEqual(regular.map(({ product_ids }) => product_ids), [['americano', 'sandwich'], ['decaf', 'toast']]);
+  assert.ok(regular.every(({ store_recommended }) => !store_recommended));
+
+  const preferred = menu.map((p) => ({ ...p, recommended: p.id === 'americano' }));
+  const ranked = validateRecommendations(proposals, preferred, options);
+  assert.deepEqual(ranked.map(({ product_ids }) => product_ids), [['americano', 'sandwich'], ['americano', 'toast']]);
+
+  const onlyToast = menu.map((p) => ({ ...p, recommended: p.id === 'toast' }));
+  const toastFirst = validateRecommendations(proposals, onlyToast, options);
+  assert.deepEqual(toastFirst.map(({ product_ids }) => product_ids), [['decaf', 'toast'], ['americano', 'toast']]);
+  assert.equal(toastFirst[1].total, 9500);
+  assert.ok(toastFirst.every(({ store_recommended }) => store_recommended));
+  for (const update of [{ available: false }, { price: 9000 }]) {
+    const changed = onlyToast.map((p) => p.id === 'toast' ? { ...p, ...update } : p);
+    assert.deepEqual(validateRecommendations(proposals, changed, options).map(({ product_ids }) => product_ids), [['americano', 'sandwich']]);
+  }
+});
+test('explicit category-only requests exclude mismatched store picks in all kiosk languages', () => {
+  const products = menu.map((p) => ({ ...p, recommended: p.id === 'toast' }));
+  const proposals = [{ product_ids: ['toast', 'scone'], reason: '테스트' }, { product_ids: ['scone'], reason: '테스트' }];
+  for (const text of ['디저트만 추천해줘', 'Suggest desserts only', 'デザートだけおすすめしてください', '只推荐甜点']) {
+    assert.deepEqual(validateRecommendations(proposals, products, { text }).map(({ product_ids }) => product_ids), [['scone']]);
+  }
+  const combo = [{ product_ids: ['americano', 'toast'], reason: '테스트' }];
+  assert.equal(validateRecommendations(combo, products, { text: 'Suggest only coffee and brunch' }).length, 1);
+});
 test('budgets are checked against real menu prices and allergy safety is not inferred', () => {
   for(const [text,budget] of [['만원 안에서',10000],['1만 5천원',15000],['10,000원 이하',10000],['5천원',5000],['오천원',5000],['이만 원',20000],['칠천오백원',7500],['1만 오천원',15000],['within 10000 won',10000],['10000ウォン以内',10000],['一万韩元以内',10000]]) assert.equal(recommendationBudget(text),budget,text);
   const set=[{product_ids:['americano','sandwich'],reason:'커피와 브런치'}];

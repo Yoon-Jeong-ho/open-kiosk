@@ -214,10 +214,29 @@ export async function kioskPage(main) {
     status(products.map((p) => `${name(p)} ${countText(1, p)}`).join(', ') + '. ' + (products.some((p) => p.temperatures.length > 1) ? t('tempHint') : t('addHint'))); refreshHandsFree();
   };
   const showRecommendations = (suggestions) => {
-    const d = modal(`<div class="modal-heading"><h2>${e(t('recommendResults'))}</h2><p>${e(t('recommendBasis'))}</p></div><div class="recommendation-list">${suggestions.map((suggestion, i) => `<article><h3>${e(suggestion.title)}</h3><p>${e(suggestion.reason)}</p><div class="recommended-items">${suggestion.product_ids.map((id) => { const p = state.products.find((p) => p.id === id); return `<div><span class="recommend-art" style="--product-bg:${e(p.color)}" aria-hidden="true">${drinkArt(p)}</span><span><b>${e(name(p))}</b><small>${e(countText(1, p))} · ${e(money(p.price))}</small></span></div>`; }).join('')}</div><div class="recommendation-total"><strong>${e(money(suggestion.total))}</strong><button class="btn btn-outline" data-recommendation="${i}">${e(t('chooseCombo'))}</button></div></article>`).join('')}</div>`, 'recommendations-modal');
+    const d = modal(`
+      <div class="modal-heading"><h2>${e(t('recommendResults'))}</h2><p>${e(t('recommendBasis'))}</p></div>
+      <div class="recommendation-list">${suggestions.map((suggestion, i) => `
+        <article>
+          ${suggestion.store_recommended ? `<span class="store-recommendation-tag">${e(t('storeRecommendation'))}</span>` : ''}
+          <h3>${e(suggestion.title)}</h3><p>${e(suggestion.reason)}</p>
+          <div class="recommended-items">${suggestion.product_ids.map((id) => {
+            const p = state.products.find((p) => p.id === id);
+            return `<div><span class="recommend-art" style="--product-bg:${e(p.color)}" aria-hidden="true">${drinkArt(p)}</span><span><b>${e(name(p))}</b><small>${e(countText(1, p))} · ${e(money(p.price))}</small></span></div>`;
+          }).join('')}</div>
+          <div class="recommendation-total">
+            <strong>${e(money(suggestion.total))}</strong>
+            <button class="btn btn-outline" data-recommendation="${i}">${e(t('chooseCombo'))}</button>
+          </div>
+        </article>`).join('')}</div>`, 'recommendations-modal');
     $$('[data-recommendation]', d).forEach((button) => button.onclick = () => { d.close(); addRecommendation(suggestions[Number(button.dataset.recommendation)]); });
     dialogActions.set(d, { choice: (index) => { const button = $(`[data-recommendation="${index}"]`, d); if (button) button.click(); else status(t('choiceHint')); } });
-    status(suggestions.map((s, i) => `${i + 1}. ${s.title}. ${money(s.total)}.`).join(' ') + ' ' + t('choiceHint')); refreshHandsFree();
+    const options = suggestions.map((s, i) => {
+      const storeLabel = s.store_recommended ? `${t('storeRecommendation')}. ` : '';
+      return `${i + 1}. ${storeLabel}${s.title}. ${money(s.total)}.`;
+    });
+    status(`${options.join(' ')} ${t('choiceHint')}`);
+    refreshHandsFree();
   };
   const sendRecommendation = async (text) => {
     if (!text.trim() || busy) return; setBusy(true);
