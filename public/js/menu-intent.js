@@ -1,11 +1,18 @@
 export const menuCategories = ['all', 'coffee', 'tea', 'dessert', 'brunch'];
 export const isRecommendationRequest = (input) => /추천|recommend|suggest|おすすめ|オススメ|推荐/i.test(String(input));
 
+export function isWholeMenuOrder(input) {
+  const text = String(input).trim().toLowerCase().replace(/[.!?。！？]+$/u, '').trim();
+  return /^(?:(?:그럼|그냥)\s*)?(?:(?:전체|모든|전)\s*(?:메뉴|상품)|메뉴\s*(?:전부|전체|모두|다))(?:를|도)?\s*(?:(?:장바구니에|다|전부|모두|한꺼번에|하나씩|한\s*(?:개|잔)씩)\s*)*(?:주문할게요|주세요|줘|(?:담아|넣어|추가\s*해|주문\s*해)\s*(?:줘요?|주세요|주실래요|줄래)?|(?:추가|주문)\s*할게요)$/u.test(text)
+    || /^(?:please\s+)?(?:add|order|i(?:'d like| want))\s+(?:one\s+of\s+)?(?:everything(?:\s+on\s+the\s+menu)?|(?:all|every)\s+(?:the\s+)?(?:menu\s+)?items?)\s*(?:please)?$/.test(text)
+    || /^(?:全メニュー|メニューを全部|すべての商品)を?(?:一つずつ)?(?:追加|注文)(?:して|してください)?$|^(?:请)?(?:把)?(?:全部|所有)(?:的)?(?:菜品|菜单|商品)(?:各一份|都)?(?:加上|加入|点上|下单)$/.test(text);
+}
+
 // These unambiguous browsing requests never place an order or change the display preferences.
 export function parseMenuNavigation(input) {
   const text = String(input).trim().toLowerCase();
-  if (!text || isRecommendationRequest(text) || /(?:\d+|한|두|세|네)\s*(?:잔|개|컵|인분|杯|個|份)|담아|담기|추가|주문해|\b(?:add|order)\b|注文して|加一/.test(text)) return null;
-  if (/아메리카노|라떼|라테|스콘|브라우니|치즈케이크|샌드위치|토스트|요거트|americano|latte|scone|brownie|cheesecake|sandwich|toast|yogurt|アメリカーノ|ラテ|サンド|トースト|美式|拿铁|三明治|吐司/.test(text)) return null;
+  if (!text || isRecommendationRequest(text) || isWholeMenuOrder(text) || /(?:\d+|한|두|세|네)\s*(?:잔|개|컵|인분|杯|個|份)|담아|담기|넣어|추가|주문해|\b(?:add|order|replace|swap)\b|注文して|加一/.test(text)) return null;
+  if (/아메리카노|라떼|라테|말차|아이스\s*티|초코|레몬에이드|스콘|브라우니|치즈케이크|샌드위치|토스트|요거트|americano|latte|matcha|iced?\s*tea|chocolate|scone|brownie|cheesecake|sandwich|toast|yogurt|アメリカーノ|ラテ|サンド|トースト|美式|拿铁|三明治|吐司/.test(text)) return null;
   if (/크게|작게|키워|확대|축소|\b(?:bigger|larger|smaller|zoom)\b|大き|小さ|放大|缩小/.test(text)) return null;
   if (/전체|모든\s*메뉴|처음\s*메뉴|\ball\s*(?:menu|items)|すべて|全メニュー|全部|所有菜单/.test(text)) return 'all';
   if (/브런치|식사|배고|출출|허기|\b(?:brunch|hungry|meal)\b|お腹|おなか|ブランチ|饿|早午餐/.test(text)) {

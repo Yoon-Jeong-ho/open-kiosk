@@ -9,6 +9,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { catalog, plans, presets } from './catalog.mjs';
 import { AppError, applyOperations, cartForDisplay, pricedCart } from './cart.mjs';
 import { generateMerchantReport, interpret, transcribe, synthesize } from './ai.mjs';
+import { resolveOrderRequest } from './order-intent.mjs';
 import { validateRecommendations } from './recommendations.mjs';
 import { checkRecommendationChoice, closeRecommendations, issueRecommendations, recordRecommendationAdd, recordRecommendationDisplay } from './recommendation-events.mjs';
 import { aggregateMerchantAnalytics, analyticsRange, evidenceFor } from './merchant-analytics.mjs';
@@ -355,12 +356,19 @@ async function handle(req, res) {
       if (method === 'POST' && path === '/api/kiosk/interpret') {
         const row = kiosk(req); const body = await readBody(req); checkRevision(row, body.revision);
         if (typeof body.text !== 'string' || !body.text.trim() || body.text.length > 500) throw new AppError(400, '주문을 500자 이내로 입력해 주세요.');
+        const cart = JSON.parse(row.cart), products = productsFor(row.store_id);
+        const direct = resolveOrderRequest({ text: body.text, cart, products, language: body.language });
+        if (direct) {
+          const changed = direct.operations.length > 0;
+          const updated = changed ? saveCartChange(row, applyOperations(cart, direct.operations, products), direct.operations) : row;
+          return json(res, 200, { ...state(updated), reply: direct.reply, navigation: direct.navigation, review: direct.review, recommendations: [], presentation: {}, changed, source: 'menu' });
+        }
         reserveAI(req, row);
-        const result = await interpret({ key, model: aiModel, text: body.text, cart: cartForDisplay(JSON.parse(row.cart)), products: productsFor(row.store_id), language: body.language, context: body.context });
+        const result = await interpret({ key, model: aiModel, text: body.text, cart: cartForDisplay(cart), products, language: body.language, context: body.context });
         const fresh = kiosk(req); checkRevision(fresh, body.revision);
-        const products = productsFor(fresh.store_id);
-        const recommendations = issueRecommendations(db, fresh, validateRecommendations(result.recommendations, products, { text: body.text, language: body.language }), now());
-        const next = applyOperations(JSON.parse(fresh.cart), result.operations, products);
+        const freshProducts = productsFor(fresh.store_id);
+        const recommendations = issueRecommendations(db, fresh, validateRecommendations(result.recommendations, freshProducts, { text: body.text, language: body.language }), now());
+        const next = applyOperations(JSON.parse(fresh.cart), result.operations, freshProducts);
         const updated = result.operations.length ? saveCartChange(fresh, next, result.operations) : fresh;
         db.prepare('UPDATE usage SET tokens=tokens+? WHERE day=?').run(result.usage, day());
         return json(res, 200, { ...state(updated), reply: result.reply, navigation: result.navigation, recommendations, presentation: result.presentation, review: result.review && next.length > 0, changed: result.operations.length > 0, source: 'openai' });

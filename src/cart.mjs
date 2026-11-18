@@ -4,7 +4,8 @@ export class AppError extends Error {
   constructor(status, message, code = 'invalid_request') { super(message); this.status = status; this.code = code; }
 }
 const fail = (message) => { throw new AppError(400, message); };
-const quantity = (n, min = 1) => Number.isInteger(n) && n >= min && n <= 20;
+export const maxOrderItems = 20;
+const quantity = (n, min = 1) => Number.isInteger(n) && n >= min && n <= maxOrderItems;
 function checkedAddons(value, product) {
   if (value === undefined || value === null) return [];
   if (!Array.isArray(value) || value.length > 3 || new Set(value).size !== value.length || value.some((id) => typeof id !== 'string' || !product.addons?.some((a) => a.id === id))) fail('이 메뉴에서 선택할 수 없는 추가 옵션이에요.');
@@ -27,7 +28,7 @@ export function cartForDisplay(cart) {
 
 // The model and the browser use the same constrained operations. Neither supplies prices.
 export function applyOperations(previous, operations, products, { recommendationId } = {}) {
-  if (!Array.isArray(operations) || operations.length > 8) fail('한 번에 8개 이하의 변경을 요청해 주세요.');
+  if (!Array.isArray(operations) || operations.length > maxOrderItems) fail(`한 번에 ${maxOrderItems}개 이하의 변경을 요청해 주세요.`);
   let cart = structuredClone(previous);
   const findProduct = (id) => {
     const p = products.find((p) => p.id === id);
@@ -88,7 +89,7 @@ export function applyOperations(previous, operations, products, { recommendation
       if (line.recommendation_ids?.length) same.recommendation_ids = [...(same.recommendation_ids || []), ...line.recommendation_ids];
     } else merged.push(line);
   }
-  if (merged.reduce((n, l) => n + l.quantity, 0) > 20) fail('한 주문에서는 메뉴를 최대 20개까지 선택할 수 있어요.');
+  if (merged.reduce((n, l) => n + l.quantity, 0) > maxOrderItems) fail(`한 주문에서는 메뉴를 최대 ${maxOrderItems}개까지 선택할 수 있어요.`);
   return merged;
 }
 

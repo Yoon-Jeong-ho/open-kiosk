@@ -58,6 +58,9 @@ test('spoken accessibility controls and modal choices distinguish refusal from c
   assert.equal(dialogCommand('네').type,'accept'); assert.equal(dialogCommand('네 개').value,4); assert.equal(dialogCommand('시럽 추가하지 마'),null);
   assert.equal(dialogCommand('취소').type, 'cancel');
   assert.equal(dialogCommand('아이스 라테 한 잔'), null);
+  assert.deepEqual(dialogCommand('샷 추가해줘'), { type: 'addon', value: 'shot', enabled: true });
+  assert.equal(dialogCommand('아이스티에 샷 추가'), null);
+  assert.equal(dialogCommand('말차를 아이스티로 바꿔줘'), null);
 });
 test('listening stays off during processing, guidance, hidden tabs, blocked dialogs and the echo tail', () => {
   for(const condition of [{ready:false},{paused:true},{busy:true},{speaking:true},{hidden:true},{dialogAllowed:false},{now:1000,resumeAfter:1450}]) assert.equal(canListen(condition),false);

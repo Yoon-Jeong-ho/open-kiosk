@@ -27,16 +27,28 @@ export function conversationCommand(input) {
   return null;
 }
 
+export function shotCommand(input) {
+  const text = String(input).trim().toLowerCase().replace(/[.!?。！？]+$/u, '').trim();
+  const korean = text.match(/^(?:(.+?)(?:에|에는|에서)\s*)?(?:에스프레소\s*)?샷(?:을|도)?\s*(?:(?:하나|한\s*번|한\s*샷|1\s*샷)(?:만)?\s*)?(추가\s*(?:해)?|더\s*넣어|넣어|빼|제거\s*(?:해)?)\s*(?:줘요?|주세요)?$/u);
+  if (korean) return { product: korean[1]?.trim(), enabled: !/빼|제거/.test(korean[2]) };
+  const english = text.match(/^(?:please\s+)?(add|remove)\s+(?:one|a|the)\s+(?:espresso\s+)?shot(?:\s+(?:to|from)\s+(.+?))?(?:\s+please)?$/);
+  if (english) return { product: english[2], enabled: english[1] === 'add' };
+  return null;
+}
+
 export function dialogCommand(input) {
   const text = String(input).trim().toLowerCase().replace(/[.!?。！？]/g, '');
   if (/^(?:취소|닫아(?:줘)?|돌아가|cancel|close|go back|キャンセル|閉じて|取消|关闭)$/.test(text)) return { type: 'cancel' };
   if (/하지\s*마|빼지\s*마|don't (?:add|remove)|do not (?:add|remove)|不要添加|不要去掉/.test(text)) return null;
+  const shot = shotCommand(text);
+  if (shot) return shot.product ? null : { type: 'addon', value: 'shot', enabled: shot.enabled };
+  if (/^(?:エスプレッソ)?ショットを?(?:追加|抜いて)(?:して|してください)?$|^(?:加|去掉)(?:一份)?浓缩(?:咖啡)?$/.test(text)) return { type: 'addon', value: 'shot', enabled: !/抜いて|去掉/.test(text) };
   if (/헤이즐넛|시럽|hazelnut|syrup|ヘーゼル|シロップ|榛果/.test(text) && !/아메리카노|라테|라떼|americano|latte/.test(text)) return { type:'addon', value:'hazelnut', enabled: !/빼|제거|없이|without|remove|なし|去掉/.test(text) };
   if (/하지\s*마|말고|아니|않|안\s*|\b(?:not|don't|no)\b|しない|不要|不确认/.test(text)) return null;
   const choice = text.match(/(?:^|\s)([12])\s*(?:번|번째|번으로|번 조합|番|个|号|$)/);
   if (choice || /첫\s*번째|첫째|\bfirst\b|一番|第一个/.test(text)) return { type: 'choice', index: choice ? Number(choice[1]) - 1 : 0 };
   if (/두\s*번째|둘째|\bsecond\b|二番|第二个/.test(text)) return { type: 'choice', index: 1 };
-  if (/아메리카노|라떼|라테|스콘|브라우니|케이크|샌드위치|토스트|요거트|americano|latte|scone|brownie|cake|sandwich|toast|yogurt/.test(text)) return null;
+  if (/아메리카노|라떼|라테|말차|초코|아이스\s*티|레몬에이드|스콘|브라우니|케이크|샌드위치|토스트|요거트|americano|latte|matcha|chocolate|iced?\s*tea|scone|brownie|cake|sandwich|toast|yogurt/.test(text)) return null;
   const count = text.match(/^(?:수량\s*)?(\d{1,2}|하나|한|둘|두|셋|세|넷|네|one|two|three|four)\s*(?:잔|개|컵|cups?|drinks?|items?|個|杯|份)?\s*(?:으로|로|주세요|please|にして|个)?$/);
   if (count && (count[1] !== '네' || /잔|개|컵/.test(text))) { const quantity = Number(count[1]) || ({하나:1,한:1,둘:2,두:2,셋:3,세:3,넷:4,네:4,one:1,two:2,three:3,four:4})[count[1]]; if (quantity >= 1 && quantity <= 20) return {type:'quantity',value:quantity}; }
   if (/(?:\d+|한|두)\s*(?:잔|개)/.test(text)) return null;

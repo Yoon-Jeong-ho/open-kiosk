@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { catalog } from '../src/catalog.mjs';
 import { applyOperations, pricedCart } from '../src/cart.mjs';
-import { parseMenuNavigation, navigationForRequest } from '../public/js/menu-intent.js';
+import { isWholeMenuOrder, parseMenuNavigation, navigationForRequest } from '../public/js/menu-intent.js';
 import { recommendationBudget, validateRecommendations } from '../src/recommendations.mjs';
 import { quantityText, productName, languages } from '../public/js/locale.js';
 import { parsePresentationCommand } from '../public/js/presentation.js';
@@ -19,6 +19,17 @@ test('mixed food orders, recommendations, and display requests are not swallowed
   assert.equal(navigationForRequest('아메리카노 두 잔 주세요', 'brunch'), null);
   assert.equal(navigationForRequest('커피랑 브런치 추천해줘', 'brunch'), 'brunch');
   assert.equal(navigationForRequest('달지 않은 커피와 브런치를 만 원 안에서 추천해줘', null), 'brunch');
+});
+test('whole-menu orders stay distinct from opening the entire menu in each language', () => {
+  for (const text of ['전체 메뉴 넣어줘', '모든 메뉴 하나씩 담아 주세요.', 'Add one of everything', '全メニューを一つずつ追加してください', '请把所有菜单各一份加入']) {
+    assert.equal(isWholeMenuOrder(text), true, text);
+    assert.equal(parseMenuNavigation(text), null, text);
+  }
+  for (const text of ['전체 메뉴 보여줘', '전체 메뉴로 바꿔줘', 'Show all menu items', '全メニューを見せて', '显示所有菜单']) {
+    assert.equal(isWholeMenuOrder(text), false, text);
+    assert.equal(parseMenuNavigation(text), 'all', text);
+  }
+  for (const text of ['전체 메뉴 넣지 마', '전체 메뉴 말고 아이스티 담아줘', '전체 메뉴 추천해줘']) assert.equal(isWholeMenuOrder(text), false, text);
 });
 test('food has no drink temperature, keeps its own unit and merges correctly with mixed orders', () => {
   let cart = applyOperations([], [{ type:'add', product_id:'sandwich', quantity:1, temperature:null }, { type:'add', product_id:'americano', quantity:1, temperature:'iced' }], menu);

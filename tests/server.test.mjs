@@ -72,6 +72,85 @@ test('cart revisions prevent stale updates and all prices come from the menu', a
   assert.equal(split.data.count, 2); assert.equal(split.data.cart.length, 2); assert.equal(split.data.total, 7000);
   assert.deepEqual((await call('/api/kiosk/state')).data.cart, split.data.cart);
 });
+test('a spoken menu replacement removes the old selection atomically and keeps unrelated items', async () => {
+  const call = client(); const initial = await bootstrap(call);
+  const { data: before } = await call('/api/kiosk/action', 'POST', { revision: initial.revision, operations: [
+    { type: 'add', product_id: 'matcha', temperature: 'hot', quantity: 2 },
+    { type: 'add', product_id: 'scone', quantity: 1 },
+  ] });
+  const interpret = (state, text) => call('/api/kiosk/interpret', 'POST', { revision: state.revision, text, language: 'ko' });
+  const soldOut = await interpret(before, '말차 대신 레몬에이드');
+  assert.equal(soldOut.status, 200);
+  assert.match(soldOut.data.reply, /품절/);
+  assert.equal(soldOut.data.revision, before.revision);
+  assert.deepEqual(soldOut.data.cart, before.cart);
+
+  const partial = await interpret(before, '아니, 말차 한 잔만 아이스티로 바꿔 주세요.');
+  assert.equal(partial.status, 200);
+  assert.deepEqual(partial.data.cart.map(({ product_id, quantity }) => [product_id, quantity]), [['matcha', 1], ['scone', 1], ['peach', 1]]);
+  const replaced = await interpret(partial.data, '말차말고 아이스티');
+  assert.equal(replaced.status, 200);
+  assert.equal(replaced.data.revision, partial.data.revision + 1);
+  assert.deepEqual(replaced.data.cart.map(({ product_id, quantity }) => [product_id, quantity]), [['scone', 1], ['peach', 2]]);
+  assert.equal(replaced.data.cart[1].temperature, 'iced');
+  assert.deepEqual(replaced.data.cart[0], before.cart[1]);
+  assert.equal((await interpret(partial.data, '말차말고 아이스티')).status, 409);
+  assert.deepEqual((await call('/api/kiosk/state')).data.cart, replaced.data.cart);
+
+  const withShot = await interpret(replaced.data, '아이스티 한 잔을 빼고 초코라떼에 샷을 추가해 주세요');
+  assert.equal(withShot.status, 200);
+  assert.match(withShot.data.reply, /샷/);
+  assert.deepEqual(withShot.data.cart.map(({ product_id, quantity, addons }) => [product_id, quantity, addons]), [
+    ['scone', 1, []], ['peach', 1, []], ['chocolate', 1, ['shot']],
+  ]);
+});
+test('an entire-menu order adds every available item and respects the order limit as a batch', async () => {
+  const call = client(); let state = await bootstrap(call);
+  const request = (text) => call('/api/kiosk/interpret', 'POST', { revision: state.revision, text });
+  const items = state.products.filter((p) => p.available);
+  assert.ok(items.length > 8);
+  const added = await request('전체 메뉴 넣어줘');
+  assert.equal(added.status, 200);
+  assert.equal(added.data.navigation, 'all');
+  assert.equal(added.data.count, items.length);
+  assert.deepEqual(added.data.cart.map((line) => line.product_id), items.map((p) => p.id));
+  for (const [i, line] of added.data.cart.entries()) {
+    assert.equal(line.quantity, 1);
+    assert.equal(line.temperature, items[i].temperatures[0] ?? null);
+    assert.deepEqual(line.addons, []);
+  }
+  state = added.data;
+  const oversized = await request('모든 메뉴를 한 개씩 장바구니에 다 담아 주세요');
+  assert.equal(oversized.status, 200);
+  assert.match(oversized.data.reply, /20개/);
+  assert.equal(oversized.data.revision, state.revision);
+  assert.deepEqual(oversized.data.cart, state.cart);
+});
+test('shots work on iced tea and chocolate latte, including partial quantities and touch orders', async () => {
+  const call = client(); let state = await bootstrap(call);
+  const request = (text) => call('/api/kiosk/interpret', 'POST', { revision: state.revision, text, language: 'ko' });
+  const tea = await request('아이스티에 샷 추가');
+  assert.equal(tea.status, 200);
+  assert.equal(tea.data.total, 4300);
+  assert.deepEqual(tea.data.cart[0].addons, ['shot']);
+  state = tea.data;
+  const repeated = await request('아이스티에 샷 추가');
+  assert.equal(repeated.data.changed, false);
+  assert.equal(repeated.data.revision, state.revision);
+
+  const chocolate = await call('/api/kiosk/action', 'POST', { revision: state.revision, operation: { type: 'add', product_id: 'chocolate', temperature: 'hot', quantity: 2 } });
+  assert.equal(chocolate.status, 200);
+  state = chocolate.data;
+  const partial = await request('따뜻한 초코라떼 한 잔에 샷 추가');
+  assert.equal(partial.status, 200);
+  assert.equal(partial.data.total - state.total, 500);
+  assert.deepEqual(partial.data.cart.filter((l) => l.product_id === 'chocolate').map((l) => [l.quantity, l.addons]), [[1, []], [1, ['shot']]]);
+  state = partial.data;
+  const touch = await call('/api/kiosk/action', 'POST', { revision: state.revision, operation: { type: 'add', product_id: 'chocolate', temperature: 'iced', quantity: 1, addons: ['shot'] } });
+  assert.equal(touch.status, 200);
+  assert.equal(touch.data.total - state.total, 5000);
+  assert.deepEqual(touch.data.cart.at(-1).addon_names, ['에스프레소 샷']);
+});
 test('final confirmation rejects altered totals, prevents duplicates, and isolates merchant orders', async () => {
   const owner = client(); const other = client(); const customer = client(); const a = await signup(owner); await signup(other, 'campus');
   const cart = (await add(customer, await bootstrap(customer, a.store_id))).data;
