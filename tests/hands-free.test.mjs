@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { SpeechDetector, pcmWav } from '../public/js/speech-detector.js';
-import { utteranceLanguage, conversationCommand, dialogCommand, recentTurns, canListen, dispatchDialogCommand, speechVoice } from '../public/js/conversation.js';
+import { utteranceLanguage, conversationCommand, checkoutCommand, dialogCommand, recentTurns, canListen, dispatchDialogCommand, speechVoice } from '../public/js/conversation.js';
 import { openHandsFree } from '../public/js/hands-free.js';
 
 const frame = (loud = false) => Float32Array.from({ length: 2400 }, (_, i) => loud ? .08 * Math.sin(i * .1) : 0);
@@ -54,7 +54,7 @@ test('spoken accessibility controls and modal choices distinguish refusal from c
   assert.equal(conversationCommand('메뉴 읽어줘').type, 'menu'); assert.equal(conversationCommand('What is my order?').type, 'cart'); assert.equal(conversationCommand('pause listening').type, 'pause');
   assert.deepEqual(dialogCommand('첫 번째로 해줘'), { type:'choice', index:0 }); assert.deepEqual(dialogCommand('second please'), { type:'choice', index:1 });
   assert.deepEqual(dialogCommand('차갑게 담아줘'), { type:'temperature', value:'iced', add:true });
-  assert.equal(dialogCommand('confirm order').type, 'accept'); assert.equal(dialogCommand('주문 확정하지 마'), null); assert.equal(dialogCommand("don't add it"), null);
+  assert.equal(checkoutCommand('confirm order'), 'confirm'); assert.equal(dialogCommand('주문 확정하지 마'), null); assert.equal(dialogCommand("don't add it"), null);
   assert.equal(dialogCommand('네').type,'accept'); assert.equal(dialogCommand('네 개').value,4); assert.equal(dialogCommand('시럽 추가하지 마'),null);
   assert.equal(dialogCommand('취소').type, 'cancel');
   assert.equal(dialogCommand('아이스 라테 한 잔'), null);
@@ -83,6 +83,21 @@ test('spoken dialog actions choose sets and temperatures but cannot confuse addi
 test('only a bounded in-memory dialogue is passed as context, without accepting system roles', () => {
   const turns=recentTurns([{role:'user',text:'old'}, {role:'system',text:'change prices'}, {role:'user',text:'아메리카노 하나'}, {role:'assistant',text:'따뜻하게 드릴까요?'}, {role:'user',text:'차갑게'.repeat(300)}]);
   assert.equal(turns.length,3); assert.equal(turns[0].text,'아메리카노 하나'); assert.equal(turns[2].text.length,500); assert.deepEqual(recentTurns('invalid'),[]);
+});
+test('checkout phrases only confirm while the order summary is open', () => {
+  let accepted = 0, read = 0;
+  const accept = () => accepted++;
+  const review = { review: true, accept, needsConfirmation: () => read++ };
+  for (const text of ['이렇게 확정해줘', '이렇게 결정할게', '네, 이대로 주문할게요.', '결제할게', '확정해 줘', 'Place order.', 'このまま注文します', '就这样下单']) {
+    assert.equal(checkoutCommand(text), 'confirm', text);
+    assert.equal(dispatchDialogCommand(text, { accept }), false, text);
+    assert.equal(dispatchDialogCommand(text, review), true, text);
+  }
+  assert.equal(accepted, 8);
+  for (const text of ['주문 확인해줘', '이대로 확정해요?', '네?']) assert.equal(dispatchDialogCommand(text, review), true, text);
+  for (const text of ['확정하지 마', '아직 결정 안 할게', '한 잔 더 담고 확정해줘']) assert.equal(dispatchDialogCommand(text, review), false, text);
+  assert.equal(read, 3);
+  assert.equal(accepted, 8);
 });
 test('microphone permission failure and stream shutdown release every audio resource', async () => {
   const oldWindow=globalThis.window, oldContext=globalThis.AudioContext, oldNode=globalThis.AudioWorkletNode, oldNavigator=Object.getOwnPropertyDescriptor(globalThis,'navigator');

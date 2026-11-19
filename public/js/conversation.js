@@ -36,6 +36,20 @@ export function shotCommand(input) {
   return null;
 }
 
+export function checkoutCommand(input) {
+  const phrase = String(input).normalize('NFKC').trim().toLowerCase();
+  const text = phrase.replace(/[.!?。！？]+$/u, '').trim();
+  const korean = text.replace(/^(?:네|예|응)(?:\s*[,，]\s*|\s+)/u, '').replace(/\s+/gu, '');
+  if (/^(?:주문(?:내용)?확인|장바구니확인|결제확인)(?:해(?:줘요?|주세요)?)?$/.test(korean)
+    || /^결제(?:하기|진행|로넘어가(?:줘요?|주세요)?)?$/.test(korean)
+    || /^(?:review (?:my |the )?order|show (?:my |the )?order summary|注文(?:内容)?を?確認(?:して|したい)?|查看订单|核对订单)$/.test(text)) return 'review';
+  if (/^(?:이대로|그대로|이렇게|이걸로)?(?:주문(?:을)?)?(?:확정|결정)(?:해(?:요|줘요?|주세요)?|할게요?|하겠습니다|할래요?)?$/.test(korean)
+    || /^(?:이대로|그대로|이렇게|이걸로)?(?:주문|결제)(?:을|를)?(?:해(?:줘요?|주세요)?|할게요?|하겠습니다|할래요?|진행해(?:줘요?|주세요)?)$/.test(korean)
+    || /^(?:이대로|그대로|이렇게|이걸로)할게요?$/.test(korean)
+    || /^(?:confirm(?: (?:my |the )?order)?|place (?:my |the )?order|check ?out|注文確定|このまま注文します|确认(?:下单|订单)?|就这样下单)$/.test(text)) return /\?$/.test(phrase) ? 'review' : 'confirm';
+  return null;
+}
+
 export function dialogCommand(input) {
   const text = String(input).trim().toLowerCase().replace(/[.!?。！？]/g, '');
   if (/^(?:취소|닫아(?:줘)?|돌아가|cancel|close|go back|キャンセル|閉じて|取消|关闭)$/.test(text)) return { type: 'cancel' };
@@ -54,7 +68,7 @@ export function dialogCommand(input) {
   if (/(?:\d+|한|두)\s*(?:잔|개)/.test(text)) return null;
   const hot = /따뜻|뜨거|\bhot\b|ホット|温か|热/.test(text), iced = /차갑|아이스|\biced?\b|冷た|アイス|冰/.test(text);
   if (hot !== iced) return { type: 'temperature', value: hot ? 'hot' : 'iced', add: /담아|담기|추가|\badd\b|追加|添加/.test(text) };
-  if (/^(?:네|예|응|담아(?:줘)?|추가해(?:줘)?|확정(?:해줘)?|주문\s*확정|yes|confirm(?: order)?|place order|add(?: it| this set)?|はい|注文確定|追加して|确认(?:下单)?|添加)$/.test(text)) return { type: 'accept' };
+  if (/^(?:네|예|응|담아(?:줘)?|추가해(?:줘)?|yes|add(?: it| this set)?|はい|追加して|添加)$/.test(text)) return { type: 'accept' };
   return null;
 }
 
@@ -64,10 +78,17 @@ export function canListen({ ready = true, paused = false, busy = false, speaking
 
 export function dispatchDialogCommand(input, actions) {
   if (!actions) return false;
+  const checkout = checkoutCommand(input);
+  if (checkout) {
+    if (!actions.review) return false;
+    if (checkout === 'confirm') actions.accept?.();
+    else actions.needsConfirmation?.();
+    return true;
+  }
   const command = dialogCommand(input);
   if (!command) return false;
   if (command.type === 'choice' && !actions.choice && actions.quantity && /^\s*[12]\s*[.!?]?\s*$/.test(input)) { actions.quantity(command.index + 1); return true; }
-  if (command.type === 'accept' && actions.review && /담아|추가|\badd\b|追加|添加/i.test(input)) { actions.needsConfirmation?.(); return true; }
+  if (command.type === 'accept' && actions.review && /담아|추가|\badd\b|追加|添加|[?？]\s*$/i.test(input)) { actions.needsConfirmation?.(); return true; }
   if (typeof actions[command.type] !== 'function') return false;
   actions[command.type](command.value ?? command.index, command.type === 'addon' ? command.enabled : command.add);
   return true;

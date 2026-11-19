@@ -19,7 +19,7 @@ const messages = {
   choiceHint: ['첫 번째 또는 두 번째라고 말하거나 화면에서 골라 주세요.', 'Say first or second, or choose on screen.', '一番、二番と話すか画面で選んでください。', '请说第一个或第二个，也可以在屏幕选择。'],
   addHint: ['담아줘라고 말하거나 담기 버튼을 눌러 주세요.', 'Say add it, or press Add.', '追加して、と話すか追加ボタンを押してください。', '请说添加，或点击添加按钮。'],
   tempHint: ['따뜻하게 또는 차갑게 말씀해 주세요.', 'Say hot or iced.', 'ホット、またはアイスとお話しください。', '请说热饮或冰饮。'],
-  confirmHint: ['주문 내용을 확인한 뒤 주문 확정이라고 말하거나 확정 버튼을 눌러 주세요.', 'Check your order, then say confirm order or press Place order.', '内容を確認し、注文確定と話すか注文ボタンを押してください。', '请核对订单，再说确认下单或点击确认按钮。'],
+  confirmHint: ['주문이 맞으면 “이대로 확정해 줘”라고 말하거나 주문 확정을 눌러 주세요.', 'Check your order, then say confirm order or press Place order.', '内容を確認し、注文確定と話すか注文ボタンを押してください。', '请核对订单，再说确认下单或点击确认按钮。'],
   keyboardHelp: ['Alt+M 대화 쉬기·계속, Alt+R 다시 듣기, Alt+O 주문 확인. Tab으로 이동하고 Enter로 선택할 수 있어요.', 'Alt+M pauses or resumes voice. Alt+R repeats guidance. Alt+O reviews your order. Use Tab and Enter to navigate and select.', 'Alt+Mで音声停止・再開、Alt+Rで再読、Alt+Oで注文確認。TabとEnterで操作できます。', 'Alt+M暂停或继续语音，Alt+R重听，Alt+O确认订单。使用Tab和Enter操作。'],
   inputBlocked: ['처리 중이에요. 잠시 후 다시 말씀해 주세요.', 'Processing. Please speak again in a moment.', '処理中です。少し待ってからお話しください。', '正在处理，请稍后再说。'],
   skip: ['본문으로 건너뛰기', 'Skip to content', '本文へ移動', '跳至主要内容'],

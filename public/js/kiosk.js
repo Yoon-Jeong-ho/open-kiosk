@@ -4,7 +4,7 @@ import { parseMenuNavigation, isRecommendationRequest } from './menu-intent.js';
 import { executeVoiceAudio } from './voice-flow.js';
 import { normalizePreferences, applyPresentation, parsePresentationCommand } from './presentation.js';
 import { openHandsFree } from './hands-free.js';
-import { utteranceLanguage, conversationCommand, dialogCommand, recentTurns, canListen, dispatchDialogCommand, speechVoice } from './conversation.js';
+import { utteranceLanguage, conversationCommand, checkoutCommand, dialogCommand, recentTurns, canListen, dispatchDialogCommand, speechVoice } from './conversation.js';
 
 export async function kioskPage(main) {
   let alive = true, busy = false, state, category = 'all', menuRevision = 0, micPending = false, uiRevision = 0;
@@ -252,7 +252,10 @@ export async function kioskPage(main) {
     dialogActions.set(d, { free: true }); status(t('recommendTitle')); refreshHandsFree();
   };
   const reviewOrder = () => {
-    if (!state.cart.length || busy) return;
+    if (busy) return;
+    if (!state.cart.length) return status(t('empty'));
+    const soldOut = state.cart.find((line) => !line.available);
+    if (soldOut) return status(t('orderItemUnavailable', { product: name(soldOut) }), true);
     const review = structuredClone(state);
     const d = modal(`<div class="modal-heading"><h2>${e(t('confirmTitle'))}</h2></div><div class="review-lines">${review.cart.map((l) => `<div><span><b>${e(name(l))}</b><small>${l.temperature ? e(temperature(l.temperature)) + ' · ' : ''}${e(countText(l.quantity, l))}${l.addons?.length ? `<br>${e(addonText(l))}` : ''}</small></span><strong>${e(money(l.subtotal))}</strong></div>`).join('')}</div><div class="review-total"><b>${e(t('total'))}</b><strong>${e(money(review.total))}</strong></div><p class="form-footnote">${e(t('demo'))}</p><p id="confirm-error" class="form-error" role="alert"></p><button id="confirm-order" class="btn btn-dark full-width">${e(t('confirm'))} ${icon('arrow')}</button><button id="return-to-order" class="btn btn-plain full-width">${e(t('back'))}</button>`);
     $('#return-to-order', d).onclick = () => d.close();
@@ -270,8 +273,9 @@ export async function kioskPage(main) {
         await fail(err); if (err.status === 409 && d.isConnected) { btn.disabled = true; $('#return-to-order', d).focus(); }
       }
     };
-    dialogActions.set(d, { review: true, needsConfirmation: () => status(t('confirmHint')), accept: () => { if (!$('#confirm-order', d).disabled) $('#confirm-order', d).click(); } });
-    status(orderDescription(review) + '. ' + t('confirmHint')); refreshHandsFree();
+    const readReview = () => status(orderDescription(review) + '. ' + t('confirmHint'));
+    dialogActions.set(d, { review: true, needsConfirmation: readReview, accept: () => { if (!$('#confirm-order', d).disabled) $('#confirm-order', d).click(); } });
+    readReview(); refreshHandsFree();
   };
   const interpretRequest = async (text) => {
     const detected = utteranceLanguage(text, prefs.language);
@@ -291,6 +295,7 @@ export async function kioskPage(main) {
       if (actions) open.close();
       else return;
     }
+    if (checkoutCommand(text)) { setBusy(false); reviewOrder(); return; }
     const display = parsePresentationCommand(text, prefs);
     if (display) { applyUI(display); return; }
     const navigation = parseMenuNavigation(text);
