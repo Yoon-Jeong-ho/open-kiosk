@@ -3,6 +3,7 @@ import { isLanguage, productName, tr } from '../public/js/locale.js';
 import { presentationForRequest } from '../public/js/presentation.js';
 import { isRecommendationRequest, parseMenuNavigation, navigationForRequest } from '../public/js/menu-intent.js';
 import { recentTurns, utteranceLanguage } from '../public/js/conversation.js';
+import { buildMonthlyReport, monthlyEditorialFields, monthlyReportFacts } from './monthly-report.mjs';
 
 const nullableString = { type: ['string', 'null'] };
 export const intentSchema = {
@@ -111,7 +112,31 @@ const merchantReportSchema = {
   properties: Object.fromEntries(['headline', 'observation', 'action', 'followup', 'evidence_id'].map((key) => [key, { type: 'string' }])),
 };
 
+const monthlyReportSchema = {
+  type: 'object', additionalProperties: false, required: monthlyEditorialFields,
+  properties: Object.fromEntries(monthlyEditorialFields.map((field) => [field, { type: 'string' }])),
+};
+
+async function generateMonthlyReport({ key, model, analytics }) {
+  const result = await provider('responses', key, {
+    model, store: false, max_output_tokens: 1350,
+    instructions: `소규모 카페 점주에게 한국어 월간 운영 보고서의 제목과 다음 달 실행 계획을 쓴다. 앱이 집계 사실과 수치 비교를 표시한다. 관찰 결과를 다시 설명하거나 수치와 날짜를 만들지 않는다.
+headline은 점주가 우선할 행동을 짧게 제안한다. first_step과 next_step은 다음 달 초와 중·후반에 실행하거나 관찰할 서로 다른 일이다. 시기는 앱이 표시하므로 단계 설명에서는 생략한다. 관련 메뉴나 시간대를 집계에서 찾을 수 있으면 구체적으로 쓰고 한 번에 바꿀 조건은 하나로 좁힌다. 안내가 적으면 비슷한 조건의 기록을 먼저 모은다. 각각 first_metric, next_metric에 화면에서 확인할 확정 주문 건수, 주문액, 평균 주문액, 메뉴 수량, 카드 안내·담기·주문 포함 중 관련 지표를 적는다. 관찰이 필요한 단계에서는 어떤 화면이나 선택을 지켜볼지 설명한다.
+점주는 메뉴 관리에서 추천 우선 설정을 바꿀 수 있고 최근 주문과 판매 리포트를 볼 수 있다. 그 밖의 제품 기능이나 화면을 만들어내지 않는다. 모든 금액은 결제 없는 체험 주문액이다. 재고, 원가, 현장 이용자 특성, 재방문, 외부 매출, 고객 수와 방문객 대비 주문 완료율은 관측 범위 밖이다. 추천 카드 집계를 매출 증가의 원인으로 쓰지 않는다. 예산과 손님의 주문 조건은 유지한다. 항목마다 구체적으로 1~2문장 쓴다.`,
+    input: JSON.stringify({ range: analytics.range, ...monthlyReportFacts(analytics), counts: { orders: analytics.totals.orders, funnel: analytics.funnel }, leading_menus: analytics.menus.slice(0, 3), most_shown_combo: analytics.combos[0] ?? null }),
+    text: { format: { type: 'json_schema', name: 'kiosk_monthly_operating_report', strict: true, schema: monthlyReportSchema } },
+  });
+  const output = (result.output || []).flatMap((item) => item.content || []).filter((item) => item.type === 'output_text').map((item) => item.text).join('');
+  let editorial;
+  try { editorial = JSON.parse(output); } catch {}
+  if (result.status !== 'completed' || !editorial || monthlyEditorialFields.some((field) => typeof editorial[field] !== 'string')) {
+    throw new AppError(503, '월간 보고서를 완성하지 못했어요. 잠시 뒤 다시 생성해 주세요.', 'ai_report_incomplete');
+  }
+  return { report: buildMonthlyReport(analytics, editorial), usage: result.usage?.total_tokens || 0 };
+}
+
 export async function generateMerchantReport({ key, model, analytics, evidence }) {
+  if (analytics.period === 'month') return generateMonthlyReport({ key, model, analytics });
   const result = await provider('responses', key, {
     model, store: false, max_output_tokens: 850,
     instructions: `한국어로 소규모 카페 점주에게 짧은 운영 보고서를 작성한다. 제공된 집계만 사용한다. 주문 금액은 체험 주문액이다. 자료의 기간과 관찰 범위를 지킨다. 직전 기간 자료가 없거나 통계에 고객 특성, 원가, 재고가 없으면 추측하지 않는다. 단골, 신규 고객, 재방문, 할인 효과를 관찰한 것처럼 쓰지 않는다. 전환율은 관찰 결과이고 추천에 의한 증가로 주장하지 않는다.

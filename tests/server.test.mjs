@@ -8,6 +8,8 @@ import { once } from 'node:events';
 import { createHash, randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { issueRecommendations } from '../src/recommendation-events.mjs';
+import { aggregateMerchantAnalytics, analyticsRange } from '../src/merchant-analytics.mjs';
+import { buildMonthlyReport } from '../src/monthly-report.mjs';
 
 let child; let tempDir; const port = 24000 + Math.floor(Math.random() * 12000); const base = `http://127.0.0.1:${port}`;
 function client() {
@@ -265,10 +267,50 @@ test('three report examples have reproducible counts and do not change store ana
     assert.match(sample.data.report.evidence, new RegExp(`안내 ${shown}회 · 담기 ${added}회 · 주문 포함 ${confirmed}회`));
     assert.ok(sample.data.report.action.length > 10);
   }
-  const monthly = (await owner('/api/merchant/analytics?period=month&example=brunch')).data.analytics;
-  assert.equal(monthly.timeline.length, 30);
-  assert.ok(monthly.previous && monthly.funnel.shown > 80);
+  for (const [id, current, previous, included] of [
+    ['brunch', 978200, 949600, 27],
+    ['dessert', 968100, 1002400, 32],
+    ['new-menu', 730000, 740600, 1],
+  ]) {
+    const { analytics, report } = (await owner(`/api/merchant/analytics?period=month&example=${id}`)).data;
+    assert.equal(analytics.timeline.length, 30);
+    assert.equal(analytics.timeline.reduce((amount, day) => amount + day.amount, 0), current);
+    assert.equal(analytics.funnel.confirmed, included);
+    assert.equal(report.format, 'monthly');
+    assert.deepEqual(report.metrics.find((metric) => metric.id === 'amount'), {
+      id: 'amount', label: '체험 주문액', unit: '원', current, previous, difference: current - previous, relative: (current / previous - 1) * 100,
+    });
+    assert.ok(report.sections.some((section) => section.id === 'recommendation' && section.evidence.includes(`주문 포함 ${included}회`)));
+    assert.ok(report.sections.every((section) => section.commentary.length > 20));
+    assert.equal(report.plan.length, 2);
+  }
   assert.equal((await owner('/api/merchant/analytics?period=month')).data.analytics.totals.orders, 0);
+});
+test('monthly reporting compares equal KST cutoffs and distinguishes missing history from zero', () => {
+  const at = Date.parse('2026-10-31T10:15:00+09:00');
+  const { previousStart } = analyticsRange('month', at);
+  const order = (created, total) => ({ created: Date.parse(created), total, lines: [{ product_id: 'americano', quantity: 1, subtotal: total }] });
+  const orders = [
+    order('2026-10-01T10:14:59+09:00', 3000),
+    order('2026-10-01T10:15:01+09:00', 5000),
+    order('2026-10-31T10:15:00+09:00', 4500),
+    order('2026-10-31T10:15:01+09:00', 6000),
+  ];
+  const options = { period: 'month', at, orders, recommendations: [] };
+  const full = aggregateMerchantAnalytics({ ...options, coverageStart: previousStart });
+  assert.equal(full.previous.amount, 3000);
+  assert.equal(full.totals.amount, 4500);
+  assert.equal(full.menus[0].amount, 4500);
+  assert.equal(full.range.previous_to, '2026-10-01');
+  assert.match(buildMonthlyReport(full).coverage, /같은 시각/);
+  const newStore = aggregateMerchantAnalytics({ ...options, coverageStart: at - 1000 });
+  const report = buildMonthlyReport(newStore, { sales: '단골이 100% 늘었습니다.', next_metric: '아메리카노 100잔 판매' });
+  assert.equal(newStore.previous, null);
+  assert.equal(report.metrics[0].previous, null);
+  assert.equal(report.metrics[0].relative, null);
+  assert.doesNotMatch(report.sections[0].commentary, /단골|100%/);
+  assert.doesNotMatch(report.plan[1].measure, /100잔/);
+  assert.match(report.coverage, /기록이 부족/);
 });
 test('unavailable AI is explicitly reported without changing the cart', async () => {
   const call = client(); const state = (await add(call, await bootstrap(call))).data;

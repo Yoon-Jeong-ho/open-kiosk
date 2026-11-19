@@ -1,5 +1,6 @@
 import { aggregateMerchantAnalytics, evidenceFor } from './merchant-analytics.mjs';
 import { catalog } from './catalog.mjs';
+import { buildMonthlyReport } from './monthly-report.mjs';
 
 const day = 86_400_000;
 const sampleEnd = Date.parse('2026-10-31T23:59:59+09:00');
@@ -34,13 +35,46 @@ const examples = [
 
 export const reportExampleOptions = examples.map(({ id, label }) => ({ id, label }));
 
+const monthlyExamples = {
+  brunch: {
+    headline: '점심 브런치 추천 순서를 비교하고 오전 주문도 챙기세요',
+    sales: '주문 건수는 직전 기간과 거의 같아 평균 주문액이 올라간 점이 눈에 띄어요. 오전 주문이 많은 시간대에는 기본 음료 주문이 얼마나 몰리는지 먼저 확인해 보세요.',
+    menus: '아메리카노는 주문 수량이 가장 많아요. 오전 음료 주문과 점심 브런치 주문을 각각 확인하면 같은 아메리카노가 단품으로 잘 팔리는지, 식사와 함께 선택되는지 구분하는 데 도움이 돼요.',
+    recommendation: '아메리카노와 에그 토스트는 만 원 이하 예산에서 시험하기 좋은 조합이에요. 담은 카드 중 절반 정도만 최종 주문에 남았으니, 안내 순서와 장바구니 이후 흐름을 각각 살펴보세요.',
+    first_step: '평일 점심에 같은 예산과 조건을 만족하는 주문을 골라 기본 순서를 운영해 보세요. 추천 카드 안내, 조합 담기, 주문 확정 수치를 남겨 비교 기준을 정해요.',
+    first_metric: '안내 대비 조합 담기 비율과 확정 주문 건수',
+    next_step: '비슷한 평일 점심에 에그 토스트의 추천 우선 설정만 바꿔 보세요. 가격과 조합 구성을 유지하고 같은 시간대의 결과를 비교하세요.',
+    next_metric: '토스트 판매 수량, 추천 주문 포함률, 전체 확정 주문 건수',
+  },
+  dessert: {
+    headline: '오후 디저트 조합을 담은 뒤 무엇을 다시 확인하는지 살펴보세요',
+    sales: '직전 비교 기간보다 주문 건수가 줄었고 평균 주문액은 비슷해요. 오후에 주문이 몰리는 운영일을 골라 주문 시간대와 디저트 선택 흐름을 함께 살펴보세요.',
+    menus: '카페라테와 브라우니는 판매 수량이 많은 메뉴예요. 카페라테와 버터 스콘을 함께 추천했을 때 음료만 주문하는 경우가 있는지 현장에서 확인해 보세요.',
+    recommendation: '담긴 카드 62회 중 32회가 조합 전체로 확정됐어요. 나머지 30회는 조합이 온전히 남지 않았거나 주문이 확정되지 않은 경우를 함께 담고 있어요. 손님이 어느 화면에서 무엇을 확인했는지는 직접 관찰해 보세요.',
+    first_step: '오후에 카페라테와 버터 스콘을 담는 흐름을 지켜보세요. 온도를 고를 때와 합계를 확인할 때 중 어느 쪽에서 질문이 반복되는지 기록해요.',
+    first_metric: '담기 이후 자주 되묻는 화면과 담기 대비 주문 포함률',
+    next_step: '합계를 확인하기 어렵다는 관찰이 반복되면 조합 가격 안내 위치만 바꿔 보세요. 온도 선택이 문제라면 가격 위치를 유지하고 온도 안내 문구만 조정해요.',
+    next_metric: '담기 대비 조합 주문 포함률과 평균 주문액',
+  },
+  'new-menu': {
+    headline: '말차 조합은 안내 사례를 더 모은 뒤 추천 순서를 조정하세요',
+    sales: '전체 체험 주문액은 직전 기간보다 줄었어요. 전체 주문과 말차 조합 추천 기록의 규모가 달라, 두 결과는 각각 살펴보는 편이 좋아요.',
+    menus: '아메리카노와 브라우니처럼 주문이 많이 들어온 메뉴는 현재 판매 수량을 기준으로 점검해 보세요. 말차와 스콘 조합은 실제 안내 상황을 더 관찰할 필요가 있어요.',
+    recommendation: '카드 안내가 6회여서 주문 한 건에도 포함률이 크게 달라져요. 어떤 예산과 시간대에서 같은 조합을 보는지 기록을 먼저 쌓아 보세요.',
+    first_step: '비슷한 오후 시간대에 만 원 이하 조합을 찾는 손님에게 말차라테와 버터 스콘을 안내해 보세요. 메뉴 선택 화면과 가격은 그대로 유지해요.',
+    first_metric: '여러 운영일에 걸친 카드 안내 건수와 조합 주문 포함 건수',
+    next_step: '비슷한 조건의 안내 기록이 여러 날에 쌓이면 기존 디저트 조합과 비교해 보세요. 사례가 여전히 적으면 같은 조건에서 관찰을 이어가요.',
+    next_metric: '두 조합의 안내 분모, 주문 포함률, 확정 주문 건수',
+  },
+};
+
 export function reportExample(id, period) {
   const example = examples.find((item) => item.id === id);
   if (!example) return null;
   const orders = [];
   const recommendations = [];
   const addOrder = (products, created) => {
-    const lines = products.map((id) => ({ product_id: id, name: byId.get(id).name, quantity: 1 }));
+    const lines = products.map((id) => ({ product_id: id, name: byId.get(id).name, quantity: 1, subtotal: byId.get(id).price }));
     const order = { id: String(orders.length + 1), created, total: products.reduce((sum, id) => sum + byId.get(id).price, 0), lines };
     orders.push(order);
     return order.id;
@@ -67,7 +101,7 @@ export function reportExample(id, period) {
   analytics.timeline.at(-1).partial = false;
   return {
     analytics,
-    report: {
+    report: period === 'month' ? { ...buildMonthlyReport(analytics, monthlyExamples[id], { example: true }), created: sampleEnd } : {
       headline: example.headline, observation: example.observation, action: example.action, followup: example.followup,
       evidence: evidenceFor(analytics).find((entry) => entry.id === comboId).detail,
       created: sampleEnd,

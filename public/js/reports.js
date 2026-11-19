@@ -4,6 +4,7 @@ const decimal = new Intl.NumberFormat('ko-KR', { maximumFractionDigits: 1 });
 const percentage = (part, total) => total ? `${decimal.format(100 * part / total)}%` : '—';
 const dateLabel = (date) => date.slice(5).replace('-', '.');
 const reportTime = new Intl.DateTimeFormat('ko-KR', { timeZone: 'Asia/Seoul', dateStyle: 'medium', timeStyle: 'short' });
+const signed = new Intl.NumberFormat('ko-KR', { maximumFractionDigits: 1, signDisplay: 'exceptZero' });
 
 function orderChart(timeline) {
   if (!timeline.some((day) => day.orders)) return '<p class="report-empty">이 기간에 확정한 체험 주문이 없어요.</p>';
@@ -50,9 +51,42 @@ function comboPanel(combos) {
   </section>`;
 }
 
+const reportByline = (report, example) => example ? '<span class="report-tag">미리 작성한 예시</span>'
+  : `<time datetime="${new Date(report.created).toISOString()}">${e(reportTime.format(report.created))} 생성</time>`;
+
+function monthlyArticle(report, example) {
+  const value = (n, unit) => n == null ? '—' : won(n) + unit;
+  return `<article class="report-narrative report-monthly" aria-label="월간 운영 보고서">
+    ${reportByline(report, example)}
+    <h3 id="report-narrative-title" tabindex="-1">${e(report.headline)}</h3>
+    <p class="report-monthly-summary">${e(report.summary)}</p>
+    <div class="report-table-wrap"><table class="report-table">
+      <thead><tr><th scope="col">지표</th><th scope="col">최근 30일</th><th scope="col">직전 30일</th><th scope="col">변화</th></tr></thead>
+      <tbody>${report.metrics.map((metric) => `<tr>
+        <th scope="row">${e(metric.label)}</th>
+        <td>${e(value(metric.current, metric.unit))}</td><td>${e(value(metric.previous, metric.unit))}</td>
+        <td>${metric.difference == null ? '—' : e(signed.format(metric.difference) + metric.unit)}
+          ${metric.relative == null ? '' : `<small>${e(signed.format(metric.relative))}%</small>`}
+        </td>
+      </tr>`).join('')}</tbody>
+    </table></div>
+    <p class="report-monthly-coverage">${e(report.coverage)}</p>
+    <div class="report-monthly-sections">${report.sections.map((section) => `<section>
+      <h4>${e(section.title)}</h4>
+      <p class="report-monthly-fact">${e(section.evidence)}</p>
+      ${section.commentary ? `<p>${e(section.commentary)}</p>` : ''}
+    </section>`).join('')}</div>
+    <section class="report-monthly-actions">
+      <h4>다음 달 실행 계획</h4>
+      <ol>${report.plan.map((step) => `<li><strong>${e(step.when)}</strong><p>${e(step.action)}</p><p class="report-monthly-measure"><b>확인할 지표</b> ${e(step.measure)}</p></li>`).join('')}</ol>
+    </section>
+  </article>`;
+}
+
 function reportArticle(report, example) {
+  if (report.format === 'monthly') return monthlyArticle(report, example);
   return `<article class="report-narrative" aria-label="운영 보고서">
-    ${example ? '<span class="report-tag">미리 작성한 예시</span>' : `<time datetime="${new Date(report.created).toISOString()}">${e(reportTime.format(report.created))} 생성</time>`}
+    ${reportByline(report, example)}
     <h3 id="report-narrative-title" tabindex="-1">${e(report.headline)}</h3>
     <p>${e(report.observation)}</p>
     <p class="report-evidence"><strong>집계 근거</strong> ${e(report.evidence)}</p>
@@ -88,7 +122,7 @@ function dashboardView(data) {
     </div>
     <section class="report-panel report-writing">
       <div class="report-panel-heading">
-        <h2>${example ? '보고서 예시' : 'AI 운영 보고서'}</h2>
+        <h2>${a.period === 'month' ? example ? '월간 보고서 예시' : 'AI 월간 운영 보고서' : example ? '보고서 예시' : 'AI 운영 보고서'}</h2>
         ${example ? '' : `<button type="button" class="btn btn-dark btn-sm" id="report-generate" ${!can_generate || !(a.totals.orders || a.funnel.shown) ? 'disabled' : ''}>AI 보고서 생성</button>`}
       </div>
       ${!example && !can_generate ? '<p class="report-caption">AI 보고서 생성 연결을 사용할 수 없어요.</p>' : ''}
@@ -108,6 +142,7 @@ export function bindReports(container, kioskPath) {
   let period = params.get('period') === 'month' ? 'month' : 'week';
   let example = params.get('example') || '';
   let request = 0;
+  let overview;
   container.innerHTML = `
     <section class="report-test-panel" aria-labelledby="report-test-title">
       <div><h2 id="report-test-title">점주 테스트</h2>
@@ -142,7 +177,8 @@ export function bindReports(container, kioskPath) {
       if (revision !== request || controller.signal.aborted) return;
       source.innerHTML = `<option value="">내 매장 체험 기록</option><optgroup label="가상 보고서 예시">${data.examples.map((opt) => `<option value="${e(opt.id)}">${e(opt.label)}</option>`).join('')}</optgroup>`;
       source.value = example;
-      result.innerHTML = dashboardView(data);
+      overview = data;
+      result.innerHTML = dashboardView(overview);
       loadStatus.textContent = '';
     } catch (err) {
       if (revision === request && !controller.signal.aborted) loadStatus.textContent = err.message;
@@ -171,10 +207,11 @@ export function bindReports(container, kioskPath) {
     button.disabled = true;
     status.textContent = '집계값을 바탕으로 보고서를 작성하고 있어요.';
     try {
-      const { report } = await api('/api/merchant/analytics/report', { method: 'POST', body: { period }, signal: controller.signal });
+      const { report, analytics } = await api('/api/merchant/analytics/report', { method: 'POST', body: { period }, signal: controller.signal });
       if (revision !== request || controller.signal.aborted) return;
-      $('#report-article', container).innerHTML = reportArticle(report, false);
-      status.textContent = '보고서를 생성했어요.';
+      overview = { ...overview, analytics, report };
+      result.innerHTML = dashboardView(overview);
+      $('#report-generation-status', container).textContent = '보고서를 생성했어요.';
       $('#report-narrative-title', container).focus({ preventScroll: true });
     } catch (err) {
       if (revision === request && !controller.signal.aborted) status.textContent = err.message;

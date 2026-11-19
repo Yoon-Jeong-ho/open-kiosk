@@ -180,7 +180,11 @@ function storedReport(storeId, period, fingerprint) {
   return saved ? { ...JSON.parse(saved.report), created: saved.created } : null;
 }
 
-const reportFingerprint = (analytics) => hash(JSON.stringify({ version: 2, analytics }));
+function reportFingerprint(analytics) {
+  if (analytics.period === 'month') return hash(JSON.stringify({ version: 3, analytics }));
+  const weekly = { ...analytics, menus: analytics.menus.map(({ name, quantity }) => ({ name, quantity })) };
+  return hash(JSON.stringify({ version: 2, analytics: weekly }));
+}
 
 async function handle(req, res) {
   headers(res);
@@ -265,7 +269,7 @@ async function handle(req, res) {
         const analytics = storeAnalytics(store, period);
         const fingerprint = reportFingerprint(analytics);
         const cached = storedReport(store.id, period, fingerprint);
-        if (cached) return json(res, 200, { report: cached });
+        if (cached) return json(res, 200, { report: cached, analytics });
         const evidence = evidenceFor(analytics);
         if (!evidence.length) throw new AppError(409, '추천이나 체험 주문 기록을 만든 뒤 보고서를 생성해 주세요.', 'report_no_data');
         if (!key) throw new AppError(503, 'AI 보고서 생성 연결을 사용할 수 없어요.', 'ai_not_configured');
@@ -284,7 +288,7 @@ async function handle(req, res) {
           INSERT INTO merchant_reports(store_id,period,fingerprint,report,created) VALUES (?,?,?,?,?)
           ON CONFLICT(store_id,period) DO UPDATE SET fingerprint=excluded.fingerprint,report=excluded.report,created=excluded.created
         `).run(store.id, period, fingerprint, JSON.stringify(result.report), created);
-        return json(res, 201, { report: { ...result.report, created } });
+        return json(res, 201, { report: { ...result.report, created }, analytics });
       }
       if (method === 'PATCH' && path === '/api/merchant/menu') {
         const store = merchant(req); const body = await readBody(req);

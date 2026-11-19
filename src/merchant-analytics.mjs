@@ -31,7 +31,9 @@ function countEvent(funnel, event) {
 
 export function aggregateMerchantAnalytics({ period, at, coverageStart, orders, recommendations }) {
   const { start, end, previousStart } = analyticsRange(period, at);
-  const currentOrders = orders.filter((order) => order.created >= start && order.created < end);
+  const cutoff = Math.min(end, at + 1);
+  const previousCutoff = period === 'month' ? cutoff - (end - start) : start;
+  const currentOrders = orders.filter((order) => order.created >= Math.max(start, coverageStart) && order.created < cutoff);
   const timeline = new Map();
   for (let date = Math.max(start, startOfDay(coverageStart)); date < end; date += day) {
     timeline.set(kstDate(date), { date: kstDate(date), orders: 0, amount: 0, partial: startOfDay(at) === date || coverageStart > date });
@@ -43,8 +45,10 @@ export function aggregateMerchantAnalytics({ period, at, coverageStart, orders, 
     if (entry) { entry.orders++; entry.amount += order.total; }
     hours[new Date(order.created + korea).getUTCHours()].orders++;
     for (const line of order.lines) {
-      if (!menus.has(line.product_id)) menus.set(line.product_id, { name: line.name || name(line.product_id), quantity: 0 });
-      menus.get(line.product_id).quantity += line.quantity;
+      if (!menus.has(line.product_id)) menus.set(line.product_id, { name: line.name || name(line.product_id), quantity: 0, amount: 0 });
+      const menu = menus.get(line.product_id);
+      menu.quantity += line.quantity;
+      menu.amount = menu.amount === null || !Number.isSafeInteger(line.subtotal) ? null : menu.amount + line.subtotal;
     }
   }
 
@@ -52,7 +56,7 @@ export function aggregateMerchantAnalytics({ period, at, coverageStart, orders, 
   const budgetGroups = new Map();
   const funnel = emptyFunnel();
   for (const event of recommendations) {
-    if (event.shown_at == null || event.shown_at < start || event.shown_at >= end) continue;
+    if (event.shown_at == null || event.shown_at < Math.max(start, coverageStart) || event.shown_at >= cutoff) continue;
     if (!combos.has(event.products)) {
       combos.set(event.products, {
         id: event.products, name: event.products.split(',').map(name).join(' + '), ...emptyFunnel(), store_picks: 0,
@@ -69,10 +73,13 @@ export function aggregateMerchantAnalytics({ period, at, coverageStart, orders, 
   }
   return {
     period,
-    range: { from: kstDate(start), to: kstDate(end - 1), coverage: kstDate(Math.max(start, coverageStart)) },
+    range: {
+      from: kstDate(start), to: kstDate(end - 1), coverage: kstDate(Math.max(start, coverageStart)),
+      ...(period === 'month' && { previous_from: kstDate(previousStart), previous_to: kstDate(previousCutoff - 1) }),
+    },
     totals: rollup(currentOrders),
     previous: coverageStart <= previousStart
-      ? rollup(orders.filter((order) => order.created >= previousStart && order.created < start))
+      ? rollup(orders.filter((order) => order.created >= previousStart && order.created < previousCutoff))
       : null,
     timeline: [...timeline.values()],
     peak: hours.sort((a, b) => b.orders - a.orders)[0],
