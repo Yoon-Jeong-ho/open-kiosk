@@ -106,12 +106,13 @@ export async function kioskPage(main) {
     if (announce) status(t('menuMoved', { category: t(category) }));
   };
   const addonText = (line) => (line.addons || []).map((id) => addonName(id, prefs.language)).join(' · ');
+  const kitchenNote = (line) => line.note ? `<small class="kitchen-note"><b>${e(t('kitchenNote'))}</b> ${e(line.note)}</small>` : '';
   const addonControls = (product, selected = []) => (product.addons || []).length ? `<fieldset class="addon-options"><legend>${e(t('addons'))}</legend>${product.addons.map((a) => `<label><input type="checkbox" name="addon" value="${e(a.id)}" ${selected.includes(a.id) ? 'checked' : ''}><span>${e(addonName(a.id, prefs.language))}<small>+${e(money(a.price))} ${e(t('perCup'))}</small></span></label>`).join('')}</fieldset>` : '';
   const paintCart = () => {
     const focused = document.activeElement?.closest('[data-cart-action]');
     const focusKey = focused ? { id: focused.dataset.line, action: focused.dataset.cartAction } : null;
     $('#cart-count').textContent = state.count;
-    $('#cart-lines').innerHTML = state.cart.length ? state.cart.map((l) => `<article class="cart-line"><div class="cart-line-head"><h3>${e(name(l))}</h3><button class="icon-btn" data-cart-action="remove" data-line="${e(l.id)}" aria-label="${e(name(l))} ${e(temperature(l.temperature))} ${e(t('remove'))}">${icon('close')}</button></div><div class="cart-line-options">${l.temperature ? `<span class="temp-pill ${l.temperature}">${e(temperature(l.temperature))}</span>` : ''}${(state.products.find((p) => p.id === l.product_id)?.temperatures.length || 0) > 1 ? `<button class="small-text-btn" data-cart-action="temperature" data-line="${e(l.id)}" aria-label="${e(name(l))} ${e(t('changeTemp'))}">${e(t('changeTemp'))} ${icon('refresh')}</button>` : ''}${l.available ? '' : `<span class="form-error">${e(t('unavailable'))}</span>`}</div>${(state.products.find((p) => p.id === l.product_id)?.addons?.length || 0) ? `<div class="cart-line-addons">${l.addons?.length ? `<span class="addon-pill">${e(addonText(l))} · +${e(money(l.addon_total))}</span>` : ''}<button class="small-text-btn" data-cart-action="addons" data-line="${e(l.id)}" aria-label="${e(name(l))} ${e(temperature(l.temperature))} ${e(t('editAddons'))}">${e(t('editAddons'))}</button></div>` : ''}<div class="cart-line-bottom"><div class="quantity-control"><button data-cart-action="minus" data-line="${e(l.id)}" aria-label="${e(name(l))} ${e(temperature(l.temperature))} ${e(t('less'))}">${icon('minus')}</button><span>${l.quantity}</span><button data-cart-action="plus" data-line="${e(l.id)}" aria-label="${e(name(l))} ${e(temperature(l.temperature))} ${e(t('more'))}">${icon('plus')}</button></div><strong>${e(money(l.subtotal))}</strong></div></article>`).join('') : `<div class="cart-empty">${icon('bag')}<b>${e(t('empty'))}</b></div>`;
+    $('#cart-lines').innerHTML = state.cart.length ? state.cart.map((l) => `<article class="cart-line"><div class="cart-line-head"><h3>${e(name(l))}</h3><button class="icon-btn" data-cart-action="remove" data-line="${e(l.id)}" aria-label="${e(name(l))} ${e(temperature(l.temperature))} ${e(t('remove'))}">${icon('close')}</button></div><div class="cart-line-options">${l.temperature ? `<span class="temp-pill ${l.temperature}">${e(temperature(l.temperature))}</span>` : ''}${(state.products.find((p) => p.id === l.product_id)?.temperatures.length || 0) > 1 ? `<button class="small-text-btn" data-cart-action="temperature" data-line="${e(l.id)}" aria-label="${e(name(l))} ${e(t('changeTemp'))}">${e(t('changeTemp'))} ${icon('refresh')}</button>` : ''}${l.available ? '' : `<span class="form-error">${e(t('unavailable'))}</span>`}</div>${(state.products.find((p) => p.id === l.product_id)?.addons?.length || 0) ? `<div class="cart-line-addons">${l.addons?.length ? `<span class="addon-pill">${e(addonText(l))} · +${e(money(l.addon_total))}</span>` : ''}<button class="small-text-btn" data-cart-action="addons" data-line="${e(l.id)}" aria-label="${e(name(l))} ${e(temperature(l.temperature))} ${e(t('editAddons'))}">${e(t('editAddons'))}</button></div>` : ''}<div class="cart-line-note">${kitchenNote(l)}<button class="small-text-btn" data-cart-action="note" data-line="${e(l.id)}" aria-label="${e(name(l))} ${e(temperature(l.temperature))} ${e(t('kitchenNote'))}">${e(t(l.note ? 'editKitchenNote' : 'kitchenNote'))}</button></div><div class="cart-line-bottom"><div class="quantity-control"><button data-cart-action="minus" data-line="${e(l.id)}" aria-label="${e(name(l))} ${e(temperature(l.temperature))} ${e(t('less'))}">${icon('minus')}</button><span>${l.quantity}</span><button data-cart-action="plus" data-line="${e(l.id)}" aria-label="${e(name(l))} ${e(temperature(l.temperature))} ${e(t('more'))}">${icon('plus')}</button></div><strong>${e(money(l.subtotal))}</strong></div></article>`).join('') : `<div class="cart-empty">${icon('bag')}<b>${e(t('empty'))}</b></div>`;
     $('#cart-total').textContent = money(state.total);
     $('#review-order').disabled = !state.cart.length || busy || state.cart.some((l) => !l.available);
     $('#clear-cart').disabled = !state.cart.length || busy;
@@ -182,6 +183,16 @@ export async function kioskPage(main) {
     const d = modal(`<div class="modal-heading"><h2>${e(name(line))}</h2><p>${e(temperature(line.temperature))} · ${line.quantity}</p></div>${addonControls(product, line.addons)}<button id="save-addons" class="btn btn-dark full-width">${e(t('saveAddons'))}</button>`);
     $('#save-addons', d).onclick = () => { const addons = $$('input[name=addon]:checked', d).map((el) => el.value); d.close(); change({ type: 'addons', line_id: line.id, addons }); };
     dialogActions.set(d, { addon: (id, enabled) => { const checkbox = $(`input[name=addon][value="${id}"]`, d); if (checkbox) checkbox.checked = enabled; status(t('saveAddons')); }, accept: () => $('#save-addons', d).click(), free: true }); status(`${name(line)}. ${t('addons')}. ${t('addHint')}`); refreshHandsFree();
+  };
+  const chooseKitchenNote = (line) => {
+    const d = modal(`<div class="modal-heading"><h2>${e(name(line))}</h2><p>${e([temperature(line.temperature), countText(line.quantity, line)].filter(Boolean).join(' · '))}</p></div><form class="kitchen-note-form"><label for="kitchen-note-input">${e(t('kitchenNote'))}</label><input id="kitchen-note-input" type="text" maxlength="120" autocomplete="off" placeholder="${e(t('kitchenNoteExample'))}" value="${e(line.note || '')}"><button class="btn btn-dark full-width" type="submit">${e(t('saveKitchenNote'))}</button></form>`);
+    $('.kitchen-note-form', d).onsubmit = (event) => {
+      event.preventDefault();
+      const note = $('#kitchen-note-input', d).value;
+      d.close();
+      change({ type: 'note', line_id: line.id, note });
+    };
+    refreshHandsFree();
   };
   const chooseProduct = (product) => {
     turns = [];
@@ -257,7 +268,7 @@ export async function kioskPage(main) {
     const soldOut = state.cart.find((line) => !line.available);
     if (soldOut) return status(t('orderItemUnavailable', { product: name(soldOut) }), true);
     const review = structuredClone(state);
-    const d = modal(`<div class="modal-heading"><h2>${e(t('confirmTitle'))}</h2></div><div class="review-lines">${review.cart.map((l) => `<div><span><b>${e(name(l))}</b><small>${l.temperature ? e(temperature(l.temperature)) + ' · ' : ''}${e(countText(l.quantity, l))}${l.addons?.length ? `<br>${e(addonText(l))}` : ''}</small></span><strong>${e(money(l.subtotal))}</strong></div>`).join('')}</div><div class="review-total"><b>${e(t('total'))}</b><strong>${e(money(review.total))}</strong></div><p class="form-footnote">${e(t('demo'))}</p><p id="confirm-error" class="form-error" role="alert"></p><button id="confirm-order" class="btn btn-dark full-width">${e(t('confirm'))} ${icon('arrow')}</button><button id="return-to-order" class="btn btn-plain full-width">${e(t('back'))}</button>`);
+    const d = modal(`<div class="modal-heading"><h2>${e(t('confirmTitle'))}</h2></div><div class="review-lines">${review.cart.map((l) => `<div><span><b>${e(name(l))}</b><small>${l.temperature ? e(temperature(l.temperature)) + ' · ' : ''}${e(countText(l.quantity, l))}${l.addons?.length ? `<br>${e(addonText(l))}` : ''}</small>${kitchenNote(l)}</span><strong>${e(money(l.subtotal))}</strong></div>`).join('')}</div><div class="review-total"><b>${e(t('total'))}</b><strong>${e(money(review.total))}</strong></div><p class="form-footnote">${e(t('demo'))}</p><p id="confirm-error" class="form-error" role="alert"></p><button id="confirm-order" class="btn btn-dark full-width">${e(t('confirm'))} ${icon('arrow')}</button><button id="return-to-order" class="btn btn-plain full-width">${e(t('back'))}</button>`);
     $('#return-to-order', d).onclick = () => d.close();
     $('#confirm-order', d).onclick = async () => {
       const btn = $('#confirm-order', d); btn.disabled = true;
@@ -369,7 +380,7 @@ export async function kioskPage(main) {
     if (handsFree) { voicePaused = !voicePaused; cancelSpeech(); refreshHandsFree(); if (voicePaused) status(t('voicePaused')); return; }
     if (busy || micPending) return; startVoice();
   };
-  const orderDescription = (order) => order.cart.length ? order.cart.map((line) => `${name(line)} ${temperature(line.temperature)} ${countText(line.quantity, line)}${line.addons?.length ? ', ' + addonText(line) : ''}`).join('. ') + `. ${t('total')} ${money(order.total)}` : t('empty');
+  const orderDescription = (order) => order.cart.length ? order.cart.map((line) => `${name(line)} ${temperature(line.temperature)} ${countText(line.quantity, line)}${line.addons?.length ? ', ' + addonText(line) : ''}${line.note ? `. ${t('kitchenNote')} ${line.note}` : ''}`).join('. ') + `. ${t('total')} ${money(order.total)}` : t('empty');
   const refreshHandsFree = () => {
     if (!alive) return;
     if (!handsFree) { if (!demoMode && !busy && !speaking && !micPending) paintVoice(voicePhase === 'error' ? 'error' : 'idle'); return; }
@@ -471,6 +482,7 @@ export async function kioskPage(main) {
         const line = state.cart.find((v) => v.id === button.dataset.line); if (!line) return;
         const a = button.dataset.cartAction;
         if (a === 'addons' && !busy) return chooseAddons(line);
+        if (a === 'note' && !busy) return chooseKitchenNote(line);
         change(a === 'remove' ? { type: 'remove', line_id: line.id } : a === 'temperature' ? { type: 'temperature', line_id: line.id, temperature: line.temperature === 'hot' ? 'iced' : 'hot' } : { type: 'quantity', line_id: line.id, quantity: line.quantity + (a === 'plus' ? 1 : -1) });
       }
     }, { signal: controller.signal });

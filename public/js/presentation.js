@@ -35,6 +35,7 @@ export function applyPresentation(current, change) {
 export function parsePresentationCommand(input, current = defaultPreferences) {
   const text = String(input).trim().toLowerCase();
   if (/추천|recommend|suggest|おすすめ|推荐|브런치|디저트/i.test(text)) return null;
+  if (/얼음|당도|단맛|덜\s*달|\b(?:ice|sweetness)\b|氷|甘さ|甜度|冰块/.test(text) && !/글씨|글자|사진|그림|화면|\b(?:text|screen|image)\b|文字|画面|屏幕/.test(text)) return null;
   if (!text || /(?:[0-9一二三四五六七八九十한두세네])\s*(?:잔|개|컵|杯|個|份)|\b(?:add|order|cups?|hot|iced)\b|주문해|추가해|따뜻|차갑|注文して|点一/.test(text)) return null;
   if (/스콘|브라우니|치즈케이크|샌드위치|토스트|요거트|scone|brownie|cheesecake|sandwich|toast|yogurt|スコーン|ブラウニー|チーズケーキ|サンド|トースト|ヨーグルト|司康|布朗尼|芝士蛋糕|三明治|吐司|酸奶|시럽|헤이즐넛|syrup|シロップ|ヘーゼル|糖浆|아메리카노|라[테떼]|말차|초콜릿|아이스티|레몬에이드|americano|latte|coffee|matcha|chocolate|lemonade|アメリカーノ|コーヒー|ラテ|チョコ|ティー|美式|拿铁|咖啡|抹茶|巧克力|冰茶|柠檬/.test(text)) return null;
   let language = null;

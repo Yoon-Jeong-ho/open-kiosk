@@ -295,7 +295,7 @@ test('deleting a synthetic account removes its session and linked kiosk access',
   assert.equal((await customer('/api/kiosk/bootstrap', 'POST', { store: store.store_id })).status, 404);
 });
 
-test('syrup pricing and options persist through final confirmation into the merchant order', async () => {
+test('syrup pricing and options persist through final confirmation into the merchant order', async (t) => {
   const owner = client(), customer = client(); const store = await signup(owner);
   let state = await bootstrap(customer, store.store_id);
   state = (await customer('/api/kiosk/action', 'POST', { revision: state.revision, operation: { type: 'add', product_id: 'americano', temperature: 'iced', quantity: 2 } })).data;
@@ -309,6 +309,43 @@ test('syrup pricing and options persist through final confirmation into the merc
   assert.equal(order.total, 7500);
   assert.deepEqual(order.lines.find((l) => l.temperature === 'iced').addon_names, ['헤이즐넛 시럽']);
   assert.deepEqual(order.lines.find((l) => l.temperature === 'hot').addons, []);
+
+  await t.test('preparation notes follow the selected units into the merchant order without changing prices', async () => {
+    state = (await customer('/api/kiosk/state')).data;
+    const change = (operation) => customer('/api/kiosk/action', 'POST', { revision: state.revision, operation });
+    const added = await change({ type: 'add', product_id: 'latte', temperature: 'hot', quantity: 2, addons: ['hazelnut'] });
+    assert.equal(added.status, 200);
+    state = added.data;
+    const marked = await change({ type: 'note', line_id: state.cart[0].id, quantity: 1, note: '  조금 덜 뜨겁게\n 준비  ' });
+    assert.equal(marked.status, 200);
+    assert.equal(marked.data.total, state.total);
+    assert.deepEqual(marked.data.cart.map((line) => [line.quantity, line.note]), [[1, undefined], [1, '조금 덜 뜨겁게 준비']]);
+    assert.ok(marked.data.cart.every((line) => line.temperature === 'hot' && line.addons.includes('hazelnut')));
+    state = marked.data;
+
+    const noteLine = state.cart.find((line) => line.note);
+    assert.equal((await change({ type: 'note', line_id: noteLine.id, note: '가'.repeat(121) })).status, 400);
+    assert.equal((await change({ type: 'note', line_id: noteLine.id, note: '조리 요청', quantity: 2 })).status, 400);
+    assert.deepEqual((await customer('/api/kiosk/state')).data.cart, state.cart);
+    const removed = await change({ type: 'note', line_id: noteLine.id, note: null });
+    assert.equal(removed.status, 200);
+    assert.deepEqual(removed.data.cart.map((line) => [line.quantity, line.note]), [[2, undefined]]);
+    state = removed.data;
+
+    const cold = await change({ type: 'add', product_id: 'peach', temperature: 'iced', quantity: 1, note: '얼음 반만' });
+    assert.equal(cold.status, 200);
+    state = cold.data;
+    const adjusted = await change({ type: 'note', line_id: state.cart[0].id, quantity: 1, note: '조금 덜 뜨겁게' });
+    assert.equal(adjusted.status, 200);
+    state = adjusted.data;
+    const receipt = await customer('/api/kiosk/confirm', 'POST', { revision: state.revision, total: state.total, confirmed: true });
+    assert.equal(receipt.status, 201);
+    const ticket = (await owner('/api/merchant/dashboard')).data.orders.find((order) => order.id === receipt.data.order.id);
+    assert.equal(ticket.total, 13200);
+    assert.deepEqual(ticket.lines.map((line) => [line.product_id, line.quantity, line.note ?? null]), [
+      ['latte', 1, null], ['peach', 1, '얼음 반만'], ['latte', 1, '조금 덜 뜨겁게'],
+    ]);
+  });
 });
 test('demo video supports playback, byte ranges, seeking and captions without exposing other files', async () => {
   const path = base + '/media/voice-order-demo.mp4';

@@ -11,6 +11,13 @@ function checkedAddons(value, product) {
   if (!Array.isArray(value) || value.length > 3 || new Set(value).size !== value.length || value.some((id) => typeof id !== 'string' || !product.addons?.some((a) => a.id === id))) fail('이 메뉴에서 선택할 수 없는 추가 옵션이에요.');
   return [...value].sort();
 }
+function checkedNote(value) {
+  if (value == null) return '';
+  if (typeof value !== 'string') fail('조리 요청은 글자로 입력해 주세요.');
+  const note = value.replace(/\s+/gu, ' ').trim();
+  if (note.length > 120 || /[\p{Cc}\u202A-\u202E\u2066-\u2069]/u.test(note)) fail('조리 요청은 120자 이내로 입력해 주세요.');
+  return note;
+}
 
 function splitLine(line, newQuantity, changes) {
   line.quantity -= newQuantity;
@@ -51,6 +58,8 @@ export function applyOperations(previous, operations, products, { recommendation
       const temperature = p.temperatures.length ? (op.temperature ?? p.temperatures[0]) : null;
       if (p.temperatures.length ? !p.temperatures.includes(temperature) : op.temperature != null) fail('이 메뉴에서 선택할 수 없는 온도예요.');
       const line = { id: randomBytes(6).toString('hex'), product_id: p.id, temperature, quantity: q, addons: checkedAddons(op.addons, p) };
+      const note = checkedNote(op.note);
+      if (note) line.note = note;
       if (recommendationId) line.recommendation_ids = [recommendationId];
       cart.push(line);
     } else if (op.type === 'remove') {
@@ -78,12 +87,21 @@ export function applyOperations(previous, operations, products, { recommendation
       if (!quantity(q) || q > line.quantity) fail('옵션을 바꾸려는 잔 수를 확인해 주세요.');
       if (q === line.quantity) line.addons = addons;
       else cart.push(splitLine(line, q, { addons }));
+    } else if (op.type === 'note') {
+      const line = findLine(op.line_id);
+      if (op.note === undefined) fail('변경할 조리 요청을 입력해 주세요.');
+      const note = checkedNote(op.note), q = op.quantity ?? line.quantity;
+      if (!quantity(q) || q > line.quantity) fail('조리 요청을 적용할 수량을 확인해 주세요.');
+      const target = q === line.quantity ? line : splitLine(line, q, {});
+      if (note) target.note = note;
+      else delete target.note;
+      if (target !== line) cart.push(target);
     } else fail('지원하지 않는 주문 변경이에요.');
   }
   const merged = [];
   for (const line of cart) {
     line.addons = checkedAddons(line.addons, findProduct(line.product_id));
-    const same = merged.find((l) => l.product_id === line.product_id && l.temperature === line.temperature && JSON.stringify(l.addons) === JSON.stringify(line.addons));
+    const same = merged.find((l) => l.product_id === line.product_id && l.temperature === line.temperature && (l.note ?? '') === (line.note ?? '') && JSON.stringify(l.addons) === JSON.stringify(line.addons));
     if (same) {
       same.quantity += line.quantity;
       if (line.recommendation_ids?.length) same.recommendation_ids = [...(same.recommendation_ids || []), ...line.recommendation_ids];

@@ -20,7 +20,7 @@ export function parseMenuNavigation(input) {
     return 'brunch';
   }
   if (/디저트|간식|케이크\s*메뉴|\bdesserts?\b|デザート|甜点/.test(text)) return 'dessert';
-  if (/달달|달콤|단\s*거|단\s*것|sweet\s*(?:food|treat|something)|something\s*sweet|甘いもの|甜的/.test(text) && !/달지\s*않|안\s*단|not\s*sweet/.test(text) && !/음료|커피|drink|coffee/.test(text)) return 'dessert';
+  if (/달달|달콤|단\s*거|단\s*것|sweet\s*(?:food|treat|something)|something\s*sweet|甘いもの|甜的/.test(text) && !/달지\s*않|안\s*단|덜\s*달|너무\s*달|(?:not(?: too)?|less)\s*sweet/.test(text) && !/음료|커피|drink|coffee/.test(text)) return 'dessert';
   if (/커피\s*(?:메뉴|보여|쪽|로)|커피\s*종류|\bcoffee\s*(?:menu|please)|コーヒー.*(?:メニュー|見せ)|咖啡菜单/.test(text)) return 'coffee';
   if (/차\s*(?:메뉴|종류)|음료\s*(?:메뉴|보여)|\b(?:tea|drinks?)\s*menu|お茶.*メニュー|饮料菜单/.test(text)) return 'tea';
   return null;

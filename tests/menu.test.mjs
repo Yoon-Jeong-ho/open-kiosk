@@ -6,6 +6,7 @@ import { isWholeMenuOrder, parseMenuNavigation, navigationForRequest } from '../
 import { recommendationBudget, validateRecommendations } from '../src/recommendations.mjs';
 import { quantityText, productName, languages } from '../public/js/locale.js';
 import { parsePresentationCommand } from '../public/js/presentation.js';
+import { dialogCommand } from '../public/js/conversation.js';
 const menu = catalog.map((p) => ({ ...p, available: true }));
 
 test('hunger and sweet-food phrases navigate to the requested menu without implying an order', () => {
@@ -30,6 +31,13 @@ test('whole-menu orders stay distinct from opening the entire menu in each langu
     assert.equal(parseMenuNavigation(text), 'all', text);
   }
   for (const text of ['전체 메뉴 넣지 마', '전체 메뉴 말고 아이스티 담아줘', '전체 메뉴 추천해줘']) assert.equal(isWholeMenuOrder(text), false, text);
+});
+test('free-form preparation preferences pass through the local display and menu shortcuts', () => {
+  for (const text of ['조금 덜 뜨겁게 해주세요', '조금 덜 달달하게 해주세요', '얼음은 좀 작게 해주세요']) {
+    assert.equal(dialogCommand(text), null, text);
+    assert.equal(parsePresentationCommand(text), null, text);
+    assert.equal(parseMenuNavigation(text), null, text);
+  }
 });
 test('food has no drink temperature, keeps its own unit and merges correctly with mixed orders', () => {
   let cart = applyOperations([], [{ type:'add', product_id:'sandwich', quantity:1, temperature:null }, { type:'add', product_id:'americano', quantity:1, temperature:'iced' }], menu);

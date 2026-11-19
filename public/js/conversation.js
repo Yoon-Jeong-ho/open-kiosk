@@ -54,6 +54,8 @@ export function dialogCommand(input) {
   const text = String(input).trim().toLowerCase().replace(/[.!?。！？]/g, '');
   if (/^(?:취소|닫아(?:줘)?|돌아가|cancel|close|go back|キャンセル|閉じて|取消|关闭)$/.test(text)) return { type: 'cancel' };
   if (/하지\s*마|빼지\s*마|don't (?:add|remove)|do not (?:add|remove)|不要添加|不要去掉/.test(text)) return null;
+  if (/(?:덜|너무)\s*(?:뜨겁|차갑|달|달달)|미지근|(?:less|not too)\s+(?:hot|cold|sweet)|ぬるめ|不太(?:热|冷|甜)/i.test(text)) return null;
+  if (/얼음|시럽|소스|우유|휘핑|ice|syrup|sauce|milk|milk foam|シロップ|氷|糖浆|冰/.test(text) && /반만|절반|적게|덜|따로|half|less|on the side|少なめ|別添|少一点|一半/.test(text)) return null;
   const shot = shotCommand(text);
   if (shot) return shot.product ? null : { type: 'addon', value: 'shot', enabled: shot.enabled };
   if (/^(?:エスプレッソ)?ショットを?(?:追加|抜いて)(?:して|してください)?$|^(?:加|去掉)(?:一份)?浓缩(?:咖啡)?$/.test(text)) return { type: 'addon', value: 'shot', enabled: !/抜いて|去掉/.test(text) };
